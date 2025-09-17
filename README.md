@@ -9,6 +9,6 @@
        │          └── No  → [Wait until labor available]
        │
        └── No  → [Check if PO for short items exists]
-                  ├── Yes → [Assign LT = Vendor Ship Date]
+                  ├── Yes → [Assign LT = Vendor Ship Date +7]
                   └── No  → [Ask Brenda to place order]
 
