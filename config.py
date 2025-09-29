@@ -1,7 +1,8 @@
 # === File paths ===
-SALES_ORDER_FILE = r"C:\Users\Admin\OneDrive - neousys-tech\Share NTA Warehouse\Daily Update\Open Sales Order 9_12_2025.CSV"
-WAREHOUSE_INV_FILE = r"C:\Users\Admin\OneDrive - neousys-tech\Share NTA Warehouse\Daily Update\WH01S_9_12.CSV"
-SHIPPING_SCHEDULE_FILE = r"C:\Users\Admin\OneDrive - neousys-tech\Share NTA Warehouse\Daily Update\NTA_Shipping schedule_20250909.xlsx"
+SALES_ORDER_FILE = r"C:\Users\Admin\OneDrive - neousys-tech\Share NTA Warehouse\Daily Update\Open Sales Order 9_29_2025.CSV"
+WAREHOUSE_INV_FILE = r"C:\Users\Admin\OneDrive - neousys-tech\Share NTA Warehouse\Daily Update\WH01S_9_29.CSV"
+SHIPPING_SCHEDULE_FILE = r"C:\Users\Admin\OneDrive - neousys-tech\Share NTA Warehouse\Daily Update\NTA_Shipping schedule_20250918.xlsx"
+POD_FILE = r"C:\Users\Admin\OneDrive - neousys-tech\Share NTA Warehouse\Daily Update\POD_9_29.CSV"
 
 # === Supabase/Postgres (pooled) ===
 # add sslmode=require to avoid TLS errors
@@ -14,3 +15,5 @@ DATABASE_DSN = (
 DB_SCHEMA = "public"
 TBL_INVENTORY = "inventory_status"
 TBL_STRUCTURED = "wo_structured"
+TBL_SALES_ORDER = "open_sales_orders"
+TBL_POD = "Open_Purchase_Orders"

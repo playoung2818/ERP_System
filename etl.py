@@ -8,8 +8,8 @@ import logging
 from flask import Flask, jsonify 
 from flask_sqlalchemy import SQLAlchemy 
 from config import ( # type: ignore
-    SALES_ORDER_FILE, WAREHOUSE_INV_FILE, SHIPPING_SCHEDULE_FILE,
-    DATABASE_DSN, DB_SCHEMA, TBL_INVENTORY, TBL_STRUCTURED
+    SALES_ORDER_FILE, WAREHOUSE_INV_FILE, SHIPPING_SCHEDULE_FILE, POD_FILE,
+    DATABASE_DSN, DB_SCHEMA, TBL_INVENTORY, TBL_STRUCTURED, TBL_SALES_ORDER, TBL_POD
 )
 import logging, sys, traceback
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
@@ -42,10 +42,33 @@ def write_inventory_status(df: pd.DataFrame, schema: str = "public", table: str 
         chunksize=10_000,
     )
 
+def write_sales_order(df_sales_order: pd.DataFrame, schema: str = "public", table: str = "sales_order"):
+    eng = engine()
+    df_sales_order.to_sql(
+    table,                 
+    eng,
+    schema=schema,
+    if_exists="replace",   # drops + recreates to match df columns
+    index=False,
+    method="multi",
+    chunksize=10_000,
+)
 
 def write_structured(structured_df: pd.DataFrame, schema: str = "public", table: str = "wo_structured"):
     eng = engine()
     structured_df.to_sql(
+        table,
+        eng,
+        schema=schema,
+        if_exists="replace",   # drops + recreates to match df
+        index=False,
+        method="multi",
+        chunksize=10_000,
+    )
+
+def write_pod(df_pod: pd.DataFrame, schema: str = "public", table: str = "open_purchase_order"):
+    eng = engine()
+    df_pod.to_sql(
         table,
         eng,
         schema=schema,
@@ -107,7 +130,8 @@ def extract_inputs():
     df_sales_order = pd.read_csv(SALES_ORDER_FILE, encoding="ISO-8859-1")
     inventory_df = pd.read_csv(WAREHOUSE_INV_FILE)
     df_shipping_schedule = pd.read_excel(SHIPPING_SCHEDULE_FILE)
-    return df_sales_order, inventory_df, df_shipping_schedule
+    df_pod = pd.read_csv(POD_FILE, encoding="ISO-8859-1")
+    return df_sales_order, inventory_df, df_shipping_schedule, df_pod
 
 def fetch_word_files_df(api_url: str) -> pd.DataFrame:
     import requests
@@ -170,12 +194,12 @@ def fetch_pdf_orders_df_from_supabase(dsn: str) -> pd.DataFrame:
 # --------------------
 def transform_sales_order(df_sales_order: pd.DataFrame) -> pd.DataFrame:
     df = df_sales_order.copy()
-    df = df.rename(columns={"Unnamed: 0": "Component", "Num": "WO_Number", "Qty": "Required_Qty"})
+    df = df.drop(columns = ['Qty'])
+    df = df.rename(columns={"Unnamed: 0": "Component", "Num": "WO_Number", "Backordered": "Qty"})
     df["Component"] = df["Component"].ffill().astype(str).str.strip()
     df = df[~df["Component"].str.startswith("total", na=False)]
     df = df[~df["Component"].str.lower().isin(["forwarding charge", "tariff (estimation)"])]
-    if "Inventory Site" in df.columns:
-        df = df[df["Inventory Site"] == "WH01S-NTA"]
+    df = df[df["Inventory Site"] == "WH01S-NTA"]
     df['Component'] = df['Component'].replace(mappings)
     return df
 
@@ -192,7 +216,7 @@ def transform_inventory(inventory_df: pd.DataFrame) -> pd.DataFrame:
     return inv
 
 def reorder_df_out_by_output(output_df: pd.DataFrame, df_out: pd.DataFrame) -> pd.DataFrame:
-    # 1) output_df is from PDFs, df_out is from Excel
+    # 1) output_df is from PDFs, df_out is from Excel open sales order
     ref = output_df.copy()
     ref['__pos_out'] = ref.groupby('WO').cumcount()                 # position within WO
     ref['__occ'] = ref.groupby(['WO','Product Number']).cumcount()  # occurrence index for duplicates
@@ -264,14 +288,31 @@ def enforce_column_order(df: pd.DataFrame, order: list[str]) -> pd.DataFrame:
     back  = [c for c in df.columns if c not in front]
     return df.loc[:, front + back]
 
-
+def transform_pod(df_pod: pd.DataFrame) -> pd.DataFrame:
+    pod = df_pod.drop(columns=['Amount','Open Balance',"Rcv'd","Qty"], axis =1)
+    pod.rename(columns={"Date":"Order Date","Num":"QB Num","Backordered":"Qty(+)"},inplace=True)
+    pod = pod.drop(pod.columns[[0]], axis =1)
+    pod = pod.dropna(axis=0, how='all',subset=None, inplace=False)
+    pod = pod.dropna(thresh=5)
+    pod['Memo'] = pod['Memo'].str.split(' ',expand=True)[0]
+    pod['QB Num'] = pod['QB Num'].str.split('(',expand=True)[0]
+    # print(pod['Memo'].str.split('*',expand=True)[0])
+    pod['Memo'] = pod['Memo'].str.replace("*","")
+    pod.rename(columns={"Memo":"Item"},inplace=True)
+    pod['Order Date']= pd.to_datetime(pod['Order Date'])
+    pod['Deliv Date']= pd.to_datetime(pod['Deliv Date'])
+    pod['Order Date'] = pod['Order Date'].dt.strftime('%Y/%m/%d')
+    pod['Deliv Date'] = pod['Deliv Date'].dt.strftime('%Y/%m/%d')
+    df_pod = pd.DataFrame(pod)
+    return df_pod
 
 
 def build_structured_df(
     df_sales_order: pd.DataFrame,
     word_files_df: pd.DataFrame,
     inventory_df: pd.DataFrame,
-    pdf_orders_df: pd.DataFrame
+    pdf_orders_df: pd.DataFrame,
+    df_pod: pd.DataFrame
 ) -> pd.DataFrame:
 
     # Build df_out from Sales Order 
@@ -280,7 +321,7 @@ def build_structured_df(
         "P. O. #": "Customer PO",
         "WO_Number": "WO",
         "Component": "Product Number",
-        "Required_Qty": "Qty",
+        "Backordered": "Qty",
         "Ship Date": "Lead Time"
     }
     for c in ["Customer","PO"]:
@@ -339,9 +380,30 @@ def build_structured_df(
     assigned_total = structured_df["Qty"].where(assigned_mask, 0).groupby(structured_df["Product Number"]).transform("sum")
     structured_df["ATP(LT)"] = (structured_df["On Hand"] - assigned_total).clip(lower=0)
     structured_df["In Stock(Inventory)"] = structured_df["On Hand"] - structured_df.get("Picked_Qty", 0)
-    structured_df["Component_Status"] = np.where(structured_df["ATP(LT)"] >= structured_df["Qty"], "Available", "Shortage") #Available or Shortage
+
+    # Filter pods that have been locked to SO
+    filtered = df_pod[df_pod['Name'] != 'Neousys Technology Incorp.']
+    result = (
+        filtered.groupby('Item', as_index=False)['Qty(+)']
+        .sum()
+    )
+    lookup = (
+        result[['Item', 'Qty(+)']]
+        .drop_duplicates(subset=['Item'])         # ensures uniqueness
+        .set_index('Item')['Qty(+)'] # Series: index = part_number
+    )
+    structured_df['Qty(+)'] = structured_df['Product Number'].map(lookup).fillna(0)
+    structured_df["Available + installed PO"] = structured_df["Stock_Available"] + structured_df["Qty(+)"]
+
+
+
+    ## Define Component Status
+    structured_df["Component_Status"] = np.where((structured_df["Available + installed PO"] >= 0) & (structured_df["On Hand"] >= structured_df["Qty"]), "Available", "Shortage") #Available or Shortage
+
+
 
     return structured_df, final_sales_order
+
 
 
 # --------------------
@@ -349,7 +411,7 @@ def build_structured_df(
 # --------------------
 def main():
     # 1) Extract inputs
-    so_raw, inv_raw, ship = extract_inputs()
+    so_raw, inv_raw, ship, df_pod = extract_inputs()
 
     # 2) External sources
     word_files_df = fetch_word_files_df("http://192.168.60.133:5001/api/word-files")
@@ -357,19 +419,23 @@ def main():
     # 3) Transform
     so_full = transform_sales_order(so_raw)   # <-- keep the full frame (with Qty, Lead Time, etc.)
     inv = transform_inventory(inv_raw)
+    df_pod = transform_pod(df_pod)
 
     # 4) PDF orders from Supabase -> two columns ["WO","Product Number"]
     pdf_orders_df = fetch_pdf_orders_df_from_supabase(DATABASE_DSN)
 
     # 5) Build structured_df
-    structured, final_sales_order = build_structured_df(so_full, word_files_df, inv, pdf_orders_df)
+    structured, final_sales_order = build_structured_df(so_full, word_files_df, inv, pdf_orders_df, df_pod)
 
+    
     
     # 6) Load to Supabase
     write_inventory_status(inv, table=TBL_INVENTORY, schema=DB_SCHEMA)
+    write_sales_order(so_full, table=TBL_SALES_ORDER, schema=DB_SCHEMA)
     write_structured(structured, table=TBL_STRUCTURED, schema=DB_SCHEMA)
+    write_pod(df_pod, table=TBL_POD, schema=DB_SCHEMA)
 
-    print(f"✅ Loaded: {DB_SCHEMA}.{TBL_INVENTORY} rows={len(inv)}; {DB_SCHEMA}.{TBL_STRUCTURED} rows={len(structured)}")
+    print(f"✅ Loaded:{DB_SCHEMA}.{TBL_SALES_ORDER} rows={len(so_full)}; {DB_SCHEMA}.{TBL_INVENTORY} rows={len(inv)}; {DB_SCHEMA}.{TBL_STRUCTURED} rows={len(structured)}; {DB_SCHEMA}.{TBL_POD} rows={len(df_pod)}")
 
 
     # 7)Upload final_sales_order to Google Sheets
@@ -385,6 +451,7 @@ def main():
         )
     else:
         logging.info("No Open Sales Order rows to write to Google Sheets.")
+
 
 if __name__ == "__main__":
     try:
