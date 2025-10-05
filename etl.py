@@ -317,6 +317,7 @@ def build_structured_df(
 
     # Build df_out from Sales Order 
     needed_cols = {
+        "Date": "SO Entry Date",
         "Name": "Customer",
         "P. O. #": "Customer PO",
         "WO_Number": "WO",
@@ -382,7 +383,21 @@ def build_structured_df(
     structured_df["In Stock(Inventory)"] = structured_df["On Hand"] - structured_df.get("Picked_Qty", 0)
 
     # Filter pods that have been locked to SO
-    filtered = df_pod[df_pod['Name'] != 'Neousys Technology Incorp.']
+    filtered = df_pod[~df_pod['Name'].isin([
+    'Neousys Technology Incorp.',
+    'Amazon',
+    'Newegg Business, Inc.',
+    'Newegg.com',
+    'Kontron America, Inc.',
+    'Provantage LLC',
+    'SMART Modular Technologies, Inc.',
+    'Spectrum Sourcing',
+    'Arrow Electronics, Inc.',
+    'ASI Computer Technologies, Inc.',
+    'B&H',
+    'Phytools'
+
+])]
     result = (
         filtered.groupby('Item', as_index=False)['Qty(+)']
         .sum()
