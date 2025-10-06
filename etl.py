@@ -201,6 +201,7 @@ def transform_sales_order(df_sales_order: pd.DataFrame) -> pd.DataFrame:
     df = df[~df["Component"].str.lower().isin(["forwarding charge", "tariff (estimation)"])]
     df = df[df["Inventory Site"] == "WH01S-NTA"]
     df['Component'] = df['Component'].replace(mappings)
+    df['Ship Date'] = pd.to_datetime(df['Ship Date']).dt.strftime('%m/%d/%Y')
     return df
 
 def transform_inventory(inventory_df: pd.DataFrame) -> pd.DataFrame:
@@ -395,7 +396,11 @@ def build_structured_df(
     'Arrow Electronics, Inc.',
     'ASI Computer Technologies, Inc.',
     'B&H',
-    'Phytools'
+    'PhyTools',
+    'Mouser Electronics',
+    'Genoedge Corporation DBA SabrePC.COM',
+    'CoastIPC, Inc.',
+    'Industrial PC, Inc.',
 
 ])]
     result = (
@@ -408,12 +413,19 @@ def build_structured_df(
         .set_index('Item')['Qty(+)'] # Series: index = part_number
     )
     structured_df['Qty(+)'] = structured_df['Product Number'].map(lookup).fillna(0)
-    structured_df["Available + installed PO"] = structured_df["Stock_Available"] + structured_df["Qty(+)"]
+    structured_df["Available + Pre-installed PO"] = structured_df["Stock_Available"] + structured_df["Qty(+)"]
 
+    ## Recommend Restocking QTY
+    # Ensure numeric types and fill NaNs
+    structured_df['Reorder Pt (Min)'] = pd.to_numeric(structured_df['Reorder Pt (Min)'], errors='coerce').fillna(0)
+    structured_df['Stock_Available'] = pd.to_numeric(structured_df['Stock_Available'], errors='coerce').fillna(0)
+    structured_df['On PO'] = pd.to_numeric(structured_df['On PO'], errors='coerce').fillna(0)
 
+    # Calculate Restock Qty
+    structured_df['Recommended Restock Qty'] = np.maximum(0, structured_df['Reorder Pt (Min)'] - structured_df['Stock_Available'] - structured_df['On PO'])
 
     ## Define Component Status
-    structured_df["Component_Status"] = np.where((structured_df["Available + installed PO"] >= 0) & (structured_df["On Hand"] >= structured_df["Qty"]), "Available", "Shortage") #Available or Shortage
+    structured_df["Component_Status"] = np.where((structured_df["Available + Pre-installed PO"] >= 0) & (structured_df["On Hand"] > 0), "Available", "Shortage") #Available or Shortage
 
 
 
