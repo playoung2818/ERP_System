@@ -380,7 +380,7 @@ def build_structured_df(
         (structured_df["Lead Time"].dt.month.eq(12) & structured_df["Lead Time"].dt.day.eq(31))
     )
     assigned_total = structured_df["Qty"].where(assigned_mask, 0).groupby(structured_df["Product Number"]).transform("sum")
-    structured_df["ATP(LT)"] = (structured_df["On Hand"] - assigned_total).clip(lower=0)
+    structured_df["Assigned Q'ty"] = assigned_total
     structured_df["In Stock(Inventory)"] = structured_df["On Hand"] - structured_df.get("Picked_Qty", 0)
 
     # Filter pods that have been locked to SO
