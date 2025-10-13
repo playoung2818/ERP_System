@@ -422,7 +422,11 @@ def build_structured_df(
     structured_df['On PO'] = pd.to_numeric(structured_df['On PO'], errors='coerce').fillna(0)
 
     # Calculate Restock Qty
-    structured_df['Recommended Restock Qty'] = np.maximum(0, structured_df['Reorder Pt (Min)'] - structured_df['Stock_Available'] - structured_df['On PO'])
+    structured_df['Recommended Restock Qty'] = np.ceil(
+    np.maximum(0, (4 * structured_df['Sales/Week']) - structured_df['Stock_Available'] - structured_df['On PO'])
+).astype(int)
+
+
 
     ## Define Component Status
     structured_df["Component_Status"] = np.where((structured_df["Available + Pre-installed PO"] >= 0) & (structured_df["On Hand"] > 0), "Available", "Shortage") #Available or Shortage
