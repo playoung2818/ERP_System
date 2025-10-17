@@ -9,7 +9,7 @@ from flask import Flask, jsonify
 from flask_sqlalchemy import SQLAlchemy 
 from config import ( # type: ignore
     SALES_ORDER_FILE, WAREHOUSE_INV_FILE, SHIPPING_SCHEDULE_FILE, POD_FILE,
-    DATABASE_DSN, DB_SCHEMA, TBL_INVENTORY, TBL_STRUCTURED, TBL_SALES_ORDER, TBL_POD
+    DATABASE_DSN, DB_SCHEMA, TBL_INVENTORY, TBL_STRUCTURED, TBL_SALES_ORDER, TBL_POD, TBL_Shipping
 )
 import logging, sys, traceback
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
@@ -57,7 +57,7 @@ def write_sales_order(df_sales_order: pd.DataFrame, schema: str = "public", tabl
 def write_structured(structured_df: pd.DataFrame, schema: str = "public", table: str = "wo_structured"):
     desired_order = [
     "Order Date", "Name", "P. O. #", "QB Num", "Item", "Qty",
-    "Available + Pre-installed PO", "Stock_Available", "On Hand", "In Stock(Inventory)",
+    "Available + Pre-installed PO", "Available", "On Hand", "On Hand - WIP",
     "Assigned Q'ty", "On Sales Order", "On PO",
     "Available + On PO", "Sales/Week", "Recommended Restock Qty",
     "Ship Date", "Picked", "SO_Status", "Qty(+)"
@@ -81,6 +81,18 @@ def write_structured(structured_df: pd.DataFrame, schema: str = "public", table:
 def write_pod(df_pod: pd.DataFrame, schema: str = "public", table: str = "open_purchase_order"):
     eng = engine()
     df_pod.to_sql(
+        table,
+        eng,
+        schema=schema,
+        if_exists="replace",   # drops + recreates to match df
+        index=False,
+        method="multi",
+        chunksize=10_000,
+    )
+
+def write_Shipping_Schedule(df_shipping_schedule : pd.DataFrame, schema: str = "public", table: str = "NT Shipping Schedule"):
+    eng = engine()
+    df_shipping_schedule .to_sql(
         table,
         eng,
         schema=schema,
@@ -218,14 +230,81 @@ def transform_sales_order(df_sales_order: pd.DataFrame) -> pd.DataFrame:
 def transform_inventory(inventory_df: pd.DataFrame) -> pd.DataFrame:
     inv = inventory_df.copy()
     # only rename ONCE
-    inv = inv.rename(columns={"Unnamed: 0":"Part_Number", "Available":"Stock_Available"})
+    inv = inv.rename(columns={"Unnamed: 0":"Part_Number"})
     inv["Part_Number"] = inv["Part_Number"].astype(str).str.strip()
     inv['Part_Number'] = inv['Part_Number'].replace(mappings)
     # make numeric safely
-    for c in ["On Hand","On Sales Order","On PO","Stock_Available"]:
+    for c in ["On Hand","On Sales Order","On PO","Available"]:
         if c in inv.columns:
             inv[c] = pd.to_numeric(inv[c], errors="coerce").fillna(0)
     return inv
+
+def transform_pod(df_pod: pd.DataFrame) -> pd.DataFrame:
+    pod = df_pod.drop(columns=['Amount','Open Balance',"Rcv'd","Qty", "Name"], axis =1)
+    pod.rename(columns={"Date":"Order Date","Num":"QB Num","Backordered":"Qty(+)", "Source Name": "Name"},inplace=True)
+    pod = pod.drop(pod.columns[[0]], axis =1)
+    pod = pod.dropna(axis=0, how='all',subset=None, inplace=False)
+    pod = pod.dropna(thresh=5)
+    pod['Memo'] = pod['Memo'].str.split(' ',expand=True)[0]
+    pod['QB Num'] = pod['QB Num'].str.split('(',expand=True)[0]
+    # print(pod['Memo'].str.split('*',expand=True)[0])
+    pod['Memo'] = pod['Memo'].str.replace("*","")
+    pod.rename(columns={"Memo":"Item"},inplace=True)
+    pod['Order Date']= pd.to_datetime(pod['Order Date'])
+    pod['Deliv Date']= pd.to_datetime(pod['Deliv Date'])
+    pod['Order Date'] = pod['Order Date'].dt.strftime('%Y/%m/%d')
+    pod['Deliv Date'] = pod['Deliv Date'].dt.strftime('%Y/%m/%d')
+    df_pod = pd.DataFrame(pod)
+    return df_pod
+
+
+def transform_shipping(df_shipping_schedule: pd.DataFrame) -> pd.DataFrame:
+
+    df = df_shipping_schedule.copy()
+
+    # --- make sure the columns exist (create empty ones if missing) ---
+    need = ['SO NO.', 'Customer PO No.', 'Model Name', 'Ship Date', 'Qty', 'Description']
+    for c in need:
+        if c not in df.columns:
+            df[c] = np.nan
+
+    # --- select and rename ---
+    Ship = df.loc[:, need].copy()
+    Ship.rename(columns={
+        "Customer PO No.": "QB Num",
+        "Model Name": "Item",
+        "Qty": "Qty(+)"
+    }, inplace=True)
+
+    # --- basic cleaning ---
+    # QB Num: strip anything after '('
+    Ship["QB Num"] = Ship["QB Num"].astype(str).str.split("(").str[0].str.strip()
+
+    # types
+    Ship["Item"] = Ship["Item"].astype(str).str.strip()
+    Ship["Description"] = Ship["Description"].astype(str)
+
+    # coerce Ship Date to yyyy/mm/dd string if you want it normalized (optional)
+    Ship["Ship Date"] = pd.to_datetime(Ship["Ship Date"], errors="coerce")
+    Ship["Ship Date"] = Ship["Ship Date"].dt.strftime("%Y/%m/%d")
+
+    # Qty(+) numeric
+    Ship["Qty(+)"] = pd.to_numeric(Ship["Qty(+)"], errors="coerce").fillna(0).astype(int)
+
+    # --- Pre/Bare logic ---
+    model_ok = Ship["Item"].str.upper().str.startswith(("N", "SEMIL", "POC"), na=False)
+    # accept English or Chinese comma: ", including" or "， including"
+    including_ok = Ship["Description"].str.contains(r"[，,]\s*including\b", case=False, na=False)
+
+    pre_mask = model_ok & including_ok
+    Ship["Pre/Bare"] = np.where(pre_mask, "Pre", "Bare")
+
+    # optional: tidy column order
+    desired = ["SO NO.", "QB Num", "Item", "Description", "Ship Date", "Qty(+)", "Pre/Bare"]
+    Ship = Ship.reindex(columns=[c for c in desired if c in Ship.columns] +
+                               [c for c in Ship.columns if c not in desired])
+
+    return Ship
 
 def reorder_df_out_by_output(output_df: pd.DataFrame, df_out: pd.DataFrame) -> pd.DataFrame:
     """
@@ -300,24 +379,6 @@ def enforce_column_order(df: pd.DataFrame, order: list[str]) -> pd.DataFrame:
     front = [c for c in order if c in df.columns]
     back  = [c for c in df.columns if c not in front]
     return df.loc[:, front + back]
-
-def transform_pod(df_pod: pd.DataFrame) -> pd.DataFrame:
-    pod = df_pod.drop(columns=['Amount','Open Balance',"Rcv'd","Qty"], axis =1)
-    pod.rename(columns={"Date":"Order Date","Num":"QB Num","Backordered":"Qty(+)"},inplace=True)
-    pod = pod.drop(pod.columns[[0]], axis =1)
-    pod = pod.dropna(axis=0, how='all',subset=None, inplace=False)
-    pod = pod.dropna(thresh=5)
-    pod['Memo'] = pod['Memo'].str.split(' ',expand=True)[0]
-    pod['QB Num'] = pod['QB Num'].str.split('(',expand=True)[0]
-    # print(pod['Memo'].str.split('*',expand=True)[0])
-    pod['Memo'] = pod['Memo'].str.replace("*","")
-    pod.rename(columns={"Memo":"Item"},inplace=True)
-    pod['Order Date']= pd.to_datetime(pod['Order Date'])
-    pod['Deliv Date']= pd.to_datetime(pod['Deliv Date'])
-    pod['Order Date'] = pod['Order Date'].dt.strftime('%Y/%m/%d')
-    pod['Deliv Date'] = pod['Deliv Date'].dt.strftime('%Y/%m/%d')
-    df_pod = pd.DataFrame(pod)
-    return df_pod
 
 
 def build_structured_df(
@@ -410,13 +471,22 @@ def build_structured_df(
 
     # Lead Time + assigned totals per Item
     structured_df["Lead Time"] = pd.to_datetime(structured_df["Lead Time"], errors="coerce").dt.floor("D")
+    # Convert to datetime first (already in your code)
+    structured_df["Lead Time"] = pd.to_datetime(structured_df["Lead Time"], errors="coerce").dt.floor("D")
+
+    # --- Fix dummy dates: move them to 2099 equivalents ---
+    mask_july4  = (structured_df["Lead Time"].dt.month.eq(7))  & (structured_df["Lead Time"].dt.day.eq(4))
+    mask_dec31  = (structured_df["Lead Time"].dt.month.eq(12)) & (structured_df["Lead Time"].dt.day.eq(31))
+
+    structured_df.loc[mask_july4, "Lead Time"] = pd.Timestamp("2099-07-04")
+    structured_df.loc[mask_dec31, "Lead Time"] = pd.Timestamp("2099-12-31")
     assigned_mask = ~(
         (structured_df["Lead Time"].dt.month.eq(7)  & structured_df["Lead Time"].dt.day.eq(4)) |
         (structured_df["Lead Time"].dt.month.eq(12) & structured_df["Lead Time"].dt.day.eq(31))
     )
     assigned_total = structured_df["Qty"].where(assigned_mask, 0).groupby(structured_df["Item"]).transform("sum")
     structured_df["Assigned Q'ty"] = assigned_total
-    structured_df["In Stock(Inventory)"] = structured_df["On Hand"] - structured_df.get("Picked_Qty", 0)
+    structured_df["On Hand - WIP"] = structured_df["On Hand"] - structured_df.get("Picked_Qty", 0)
 
 
     # Filter pods that have been locked to SO
@@ -449,19 +519,19 @@ def build_structured_df(
         .set_index('Item')['Qty(+)'] # Series: index = part_number
     )
     structured_df['Pre-installed PO'] = structured_df['Item'].map(lookup).fillna(0)
-    structured_df["Available + Pre-installed PO"] = structured_df["Stock_Available"] + structured_df['Pre-installed PO']
+    structured_df["Available + Pre-installed PO"] = structured_df["Available"] + structured_df['Pre-installed PO']
 
     ## Recommend Restocking QTY
     # Ensure numeric types and fill NaNs
     structured_df['Reorder Pt (Min)'] = pd.to_numeric(structured_df['Reorder Pt (Min)'], errors='coerce').fillna(0)
-    structured_df['Stock_Available'] = pd.to_numeric(structured_df['Stock_Available'], errors='coerce').fillna(0)
+    structured_df['Available'] = pd.to_numeric(structured_df['Available'], errors='coerce').fillna(0)
     structured_df['On PO'] = pd.to_numeric(structured_df['On PO'], errors='coerce').fillna(0)
 
-    structured_df['Available + On PO'] = structured_df['Stock_Available'] + structured_df['On PO']
+    structured_df['Available + On PO'] = structured_df['Available'] + structured_df['On PO']
 
     # Calculate Restock Qty
     structured_df['Recommended Restock Qty'] = np.ceil(
-    np.maximum(0, (4 * structured_df['Sales/Week']) - structured_df['Stock_Available'] - structured_df['On PO'])
+    np.maximum(0, (4 * structured_df['Sales/Week']) - structured_df['Available'] - structured_df['On PO'])
 ).astype(int)
 
     ## Define Component Status
@@ -491,6 +561,7 @@ def main():
     so_full = transform_sales_order(so_raw)   # <-- keep the full frame (with Qty, Lead Time, etc.)
     inv = transform_inventory(inv_raw)
     df_pod = transform_pod(df_pod)
+    ship = transform_shipping(ship)
 
     # 4) PDF orders from Supabase -> two columns ["WO","Product Number"]
     pdf_orders_df = fetch_pdf_orders_df_from_supabase(DATABASE_DSN)
@@ -505,8 +576,9 @@ def main():
     write_sales_order(so_full, table=TBL_SALES_ORDER, schema=DB_SCHEMA)
     write_structured(structured, table=TBL_STRUCTURED, schema=DB_SCHEMA)
     write_pod(df_pod, table=TBL_POD, schema=DB_SCHEMA)
+    write_Shipping_Schedule(ship, table=TBL_Shipping, schema=DB_SCHEMA)
 
-    print(f"✅ Loaded:{DB_SCHEMA}.{TBL_SALES_ORDER} rows={len(so_full)}; {DB_SCHEMA}.{TBL_INVENTORY} rows={len(inv)}; {DB_SCHEMA}.{TBL_STRUCTURED} rows={len(structured)}; {DB_SCHEMA}.{TBL_POD} rows={len(df_pod)}")
+    print(f"✅ Loaded:{DB_SCHEMA}.{TBL_SALES_ORDER} rows={len(so_full)}; {DB_SCHEMA}.{TBL_INVENTORY} rows={len(inv)}; {DB_SCHEMA}.{TBL_STRUCTURED} rows={len(structured)}; {DB_SCHEMA}.{TBL_POD} rows={len(df_pod)}; {DB_SCHEMA}.{TBL_Shipping} rows={len(ship)}")
 
 
     # 7)Upload final_sales_order to Google Sheets
