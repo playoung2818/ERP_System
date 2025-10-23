@@ -16,13 +16,23 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 
 # Some Part Names are too long to show in QB
 mappings = {
+    'GC-J-A64GB-O-Industrial-Nvidia': 'GC-Jetson-AGX64GB-Orin-Industrial-Nvidia-JetPack-6.0',
+    'GC-Jetson-AGX64GB-Orin-Nvidia': 'GC-Jetson-AGX64GB-Orin-Nvidia-JetPack-6.0',
+    'AccsyBx-Cardholder-10108GC-5080': 'AccsyBx-Cardholder-10108GC-5080_70_70Ti',
+    'Cblkit-FP-NRU-230V-AWP_NRU-240S': 'Cblkit-FP-NRU-230V-AWP_NRU-240S-AWP',
+    'E-mPCIe-GPS-M800_Mod_40CM': 'Extnd-mPCIeHS_GPS-M800_Mod_Cbl-40CM_kits',
+    'Cbl-M12A5F-OT2-B-Red-Fuse-100CM': 'Cbl-M12A5F-OT2-Black-Red-Fuse-100CM',
+    'AccsyBx-Cardholder-9160GC-2000E': 'AccsyBx-Cardholder-9160GC-2000EAda',
+    'M.280-SSD-4TB-PCIe4-TLCWT5NH-IK': 'M.280-SSD-4TB-PCIe4-TLCWT5-NH-IK',
+    'M.242-SSD-128GB-PCIe34-TLC5WT-T': 'M.242-SSD-128GB-PCIe34-TLC5WT-TD',
+    'M.242-SSD-256GB-PCIe34-TLC5WT-T': 'M.242-SSD-256GB-PCIe34-TLC5WT-TD',
     'M.280-SSD-256GB-PCIe44-TLC5WT-T': 'M.280-SSD-256GB-PCIe44-TLC5WT-TD',
     'M.280-SSD-512GB-PCIe44-TLC5WT-T': 'M.280-SSD-512GB-PCIe44-TLC5WT-TD',
-    'M.242-SSD-256GB-PCIe34-TLC5WT-T': 'M.242-SSD-256GB-PCIe34-TLC5WT-TD',
-    'M.242-SSD-512GB-PCIe34-TLC5WT-T': 'M.242-SSD-512GB-PCIe34-TLC5WT-TD',
-    'M.242-SSD-128GB-PCIe34-TLC5WT-T': 'M.242-SSD-128GB-PCIe34-TLC5WT-TD',
-    'Cblkit-FP-NRU-230V-AWP_NRU-240S': 'Cblkit-FP-NRU-230V-AWP_NRU-240S-AWP',
+    'E-mPCIe-BTWifi-WT-6218_Mod_40CM': 'Extnd-mPCIeHS-BTWifi-WT-6218_Mod_Cbl-40CM_kits',
+    'GC-Jetson-NX16G-Orin-Nvidia': 'GC-Jetson-NX16G-Orin-Nvidia-JetPack6.0',
+    'FPnl-3Ant-NRU-170-PPC series': 'FPnl-3Ant-NRU-170-PPCseries',
 }
+
 
 # --------------------
 # Helpers
@@ -240,8 +250,8 @@ def transform_inventory(inventory_df: pd.DataFrame) -> pd.DataFrame:
     return inv
 
 def transform_pod(df_pod: pd.DataFrame) -> pd.DataFrame:
-    pod = df_pod.drop(columns=['Amount','Open Balance',"Rcv'd","Qty", "Name"], axis =1)
-    pod.rename(columns={"Date":"Order Date","Num":"QB Num","Backordered":"Qty(+)", "Source Name": "Name"},inplace=True)
+    pod = df_pod.drop(columns=['Amount','Open Balance',"Rcv'd","Qty"], axis =1)
+    pod.rename(columns={"Date":"Order Date","Num":"QB Num","Backordered":"Qty(+)"},inplace=True)
     pod = pod.drop(pod.columns[[0]], axis =1)
     pod = pod.dropna(axis=0, how='all',subset=None, inplace=False)
     pod = pod.dropna(thresh=5)
@@ -254,6 +264,7 @@ def transform_pod(df_pod: pd.DataFrame) -> pd.DataFrame:
     pod['Deliv Date']= pd.to_datetime(pod['Deliv Date'])
     pod['Order Date'] = pod['Order Date'].dt.strftime('%Y/%m/%d')
     pod['Deliv Date'] = pod['Deliv Date'].dt.strftime('%Y/%m/%d')
+    pod['Item'] = pod['Item'].replace(mappings)
     df_pod = pd.DataFrame(pod)
     return df_pod
 
