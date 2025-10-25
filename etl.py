@@ -296,8 +296,7 @@ def transform_shipping(df_shipping_schedule: pd.DataFrame) -> pd.DataFrame:
     Ship["Description"] = Ship["Description"].astype(str)
 
     # coerce Ship Date to yyyy/mm/dd string if you want it normalized (optional)
-    Ship["Ship Date"] = pd.to_datetime(Ship["Ship Date"], errors="coerce")
-    Ship["Ship Date"] = Ship["Ship Date"].dt.strftime("%Y/%m/%d")
+    Ship["Ship Date"] = pd.to_datetime(Ship["Ship Date"], errors="coerce").dt.date
 
     # Qty(+) numeric
     Ship["Qty(+)"] = pd.to_numeric(Ship["Qty(+)"], errors="coerce").fillna(0).astype(int)
@@ -552,7 +551,7 @@ def build_structured_df(
 
     structured_df.rename(columns={"SO Entry Date":"Order Date", "Customer": "Name", "Lead Time": "Ship Date", "Customer PO": "P. O. #", "Qty": "Qty(-)", "SO Status": "SO_Status" },inplace=True)
     for col in ["Order Date", "Ship Date"]:
-        structured_df[col] = pd.to_datetime(structured_df[col], errors="coerce").dt.strftime("%Y/%m/%d") 
+        structured_df[col] = pd.to_datetime(structured_df[col], errors="coerce").dt.date
 
     return structured_df, final_sales_order
 
