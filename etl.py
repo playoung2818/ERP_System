@@ -13,6 +13,10 @@ from config import ( # type: ignore
 )
 import logging, sys, traceback
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
+from datetime import datetime
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl import load_workbook
+import os
 
 # Some Part Names are too long to show in QB
 mappings = {
@@ -556,6 +560,144 @@ def build_structured_df(
     return structured_df, final_sales_order
 
 
+# No Assigned SO Summary
+def save_not_assigned_so(
+    df: pd.DataFrame,
+    output_path: str = "Not_assigned_SO.xlsx",
+    highlight_col: str = "Recommended Restock Qty",
+    band_by_col: str = "QB Num",
+    shortage_col: str = "SO_Status",
+    shortage_value: str = "Shortage",
+    column_widths: dict | None = None,
+) -> dict:
+    """
+    Save `df` to `output_path`, replacing the first sheet, then apply formatting:
+      - Freeze header row
+      - Band rows by changes in `band_by_col`
+      - Red font for rows where `shortage_col == shortage_value`
+      - Highlight `highlight_col` cells > 0 (yellow)
+      - Set column widths
+      - Rename sheet to today's date (YYYY-MM-DD)
+    Returns a summary dict.
+    """
+
+    # ---------- defaults ----------
+    if column_widths is None:
+        column_widths = {
+            'Order Date': 15,
+            "Item": 30,
+            "Name": 25,
+            "P. O. #": 15,
+            "QB Num": 15,
+            "Qty(-)": 10,
+            "Available": 15,
+            'Available + Pre-installed PO': 25,
+            'On Hand - WIP': 20,
+            'Reorder Pt (Min)': 15,
+            'Recommended Restock Qty': 20,
+            'On Sales Order': 15,
+        }
+
+    # ---------- ensure workbook exists; if not, create with a temp sheet ----------
+    if not os.path.exists(output_path):
+        with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+            # create a placeholder first sheet (name will be replaced)
+            df.to_excel(writer, sheet_name="Sheet1", index=False)
+
+    # ---------- find current first sheet name ----------
+    _wb = load_workbook(output_path)
+    first_sheet_name = _wb.sheetnames[0]
+    _wb.close()
+
+    # ---------- write df to first sheet (replace) ----------
+    with pd.ExcelWriter(output_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+        df.to_excel(writer, sheet_name=first_sheet_name, index=False)
+
+    # ---------- open workbook for styling ----------
+    wb = load_workbook(output_path)
+    ws = wb.worksheets[0]  # first sheet
+
+    # Freeze first row
+    ws.freeze_panes = "A2"
+
+    # Build header map
+    col_map: dict[str, int] = {}
+    band_col_idx = None
+    shortage_col_idx = None
+    for idx, cell in enumerate(ws[1], 1):
+        header = cell.value
+        col_map[header] = idx
+        if header == band_by_col:
+            band_col_idx = idx
+        if header == shortage_col:
+            shortage_col_idx = idx
+
+    # Fills / fonts / align
+    gray_fill    = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    white_fill   = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+    yellow_fill  = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+    red_font     = Font(color="FF0000")
+    center_align = Alignment(horizontal="center", vertical="center")
+
+    # ---------- banding + shortage red ----------
+    if band_col_idx is not None and shortage_col_idx is not None:
+        current_key = None
+        fill_toggle = False
+
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+            band_cell = row[band_col_idx - 1]
+            status_cell = row[shortage_col_idx - 1]
+
+            if band_cell.value != current_key:
+                current_key = band_cell.value
+                fill_toggle = not fill_toggle
+
+            row_fill = gray_fill if fill_toggle else white_fill
+            for c in row:
+                c.fill = row_fill
+
+            if status_cell.value == shortage_value:
+                for c in row:
+                    c.font = red_font
+
+    # ---------- highlight target column (cells > 0) ----------
+    if highlight_col in col_map:
+        h_idx = col_map[highlight_col]
+        for (cell,) in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=h_idx, max_col=h_idx):
+            try:
+                val = float(cell.value)
+            except (TypeError, ValueError):
+                val = 0.0
+            if val > 0:
+                cell.fill = yellow_fill  # override banding for this cell
+
+    # ---------- set column widths ----------
+    for name, width in column_widths.items():
+        if name in col_map:
+            letter = ws.cell(row=1, column=col_map[name]).column_letter
+            ws.column_dimensions[letter].width = width
+
+    # ---------- center-align a few common numeric columns ----------
+    for name in ["Qty", "Available + Pre-installed PO", "Available"]:
+        if name in col_map:
+            idx = col_map[name]
+            for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=idx, max_col=idx):
+                for cell in row:
+                    cell.alignment = center_align
+
+    # ---------- rename sheet to today's date ----------
+    today_str = datetime.today().strftime("%Y-%m-%d")
+    ws.title = today_str
+
+    # ---------- save ----------
+    wb.save(output_path)
+
+    # ---------- summary ----------
+    unique_wo = df[band_by_col].nunique() if band_by_col in df.columns else 0
+    return {
+        "Number of unassigned WOs:": unique_wo,
+        "sheet_name": today_str,
+    }
 
 # --------------------
 # Runner
@@ -579,8 +721,25 @@ def main():
     # 5) Build structured_df
     structured, final_sales_order = build_structured_df(so_full, word_files_df, inv, pdf_orders_df, df_pod)
 
-    
-    
+    # 6) Wirte to Not_assigned_SO.xlsx
+    ERP_df= structured[['Order Date', "Name", "P. O. #", "QB Num", "Item", 'Qty(-)', 
+                              "Available + Pre-installed PO", 'Available', "Assigned Q'ty", 'On Hand - WIP', 'On Hand', 'On Sales Order', 'On PO', 'Reorder Pt (Min)', 'Available + On PO', 'Sales/Week', 'Recommended Restock Qty', 'Ship Date', 'Picked']]
+    assigned_mask = (
+    (ERP_df["Ship Date"].dt.month.eq(7)  & ERP_df["Ship Date"].dt.day.eq(4)) |
+    (ERP_df["Ship Date"].dt.month.eq(12) & ERP_df["Ship Date"].dt.day.eq(31))
+    )
+    Not_assgned_SO = ERP_df[assigned_mask].copy()
+    summary = save_not_assigned_so(
+    Not_assgned_SO,
+    output_path="Not_assigned_SO.xlsx",
+    highlight_col="Recommended Restock Qty",
+    band_by_col="QB Num",
+    shortage_col="SO_Status",
+    shortage_value="Shortage",
+)
+    print(summary)
+
+
     # 6) Load to Supabase
     write_inventory_status(inv, table=TBL_INVENTORY, schema=DB_SCHEMA)
     write_sales_order(so_full, table=TBL_SALES_ORDER, schema=DB_SCHEMA)
