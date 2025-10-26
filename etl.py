@@ -2,11 +2,11 @@ import json, re, numpy as np, pandas as pd
 from sqlalchemy import create_engine, text
 from datetime import datetime
 from gspread_dataframe import set_with_dataframe
-from oauth2client.service_account import ServiceAccountCredentials
+from oauth2client.service_account import ServiceAccountCredentials # type: ignore
 import gspread
 import logging
 from flask import Flask, jsonify 
-from flask_sqlalchemy import SQLAlchemy 
+from flask_sqlalchemy import SQLAlchemy  # type: ignore
 from config import ( # type: ignore
     SALES_ORDER_FILE, WAREHOUSE_INV_FILE, SHIPPING_SCHEDULE_FILE, POD_FILE,
     DATABASE_DSN, DB_SCHEMA, TBL_INVENTORY, TBL_STRUCTURED, TBL_SALES_ORDER, TBL_POD, TBL_Shipping
