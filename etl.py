@@ -730,6 +730,7 @@ def main():
     (ERP_df["Ship Date"].dt.month.eq(12) & ERP_df["Ship Date"].dt.day.eq(31))
     )
     Not_assgned_SO = ERP_df[assigned_mask].copy()
+    # Summary
     summary = save_not_assigned_so(
     Not_assgned_SO,
     output_path="Not_assigned_SO.xlsx",
