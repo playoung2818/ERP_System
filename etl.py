@@ -723,7 +723,7 @@ def main():
 
     # 6) Wirte to Not_assigned_SO.xlsx
     ERP_df= structured[['Order Date', "Name", "P. O. #", "QB Num", "Item", 'Qty(-)', 
-                              "Available + Pre-installed PO", 'Available', "Assigned Q'ty", 'On Hand - WIP', 'On Hand', 'On Sales Order', 'On PO', 'Reorder Pt (Min)', 'Available + On PO', 'Sales/Week', 'Recommended Restock Qty', 'Ship Date', 'Picked']]
+                              "Available + Pre-installed PO", 'Available', "Assigned Q'ty", 'On Hand - WIP', 'On Hand', 'On Sales Order', 'On PO', 'Reorder Pt (Min)', 'Available + On PO', 'Sales/Week', 'Recommended Restock Qty', 'Ship Date', 'Picked']].copy()
     ERP_df["Ship Date"] = pd.to_datetime(ERP_df["Ship Date"], errors="coerce")
     assigned_mask = (
     (ERP_df["Ship Date"].dt.month.eq(7)  & ERP_df["Ship Date"].dt.day.eq(4)) |
