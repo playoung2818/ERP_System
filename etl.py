@@ -658,6 +658,11 @@ def save_not_assigned_so(
                 c.fill = row_fill
 
             if status_cell.value == shortage_value:
+                    # --- DEBUG INFO ---
+                print(f"[RED ROW] Shortage match found: Row={status_cell.row}, "
+                    f"QB Num={row[band_col_idx - 1].value}, "
+                    f"Item={row[col_map.get('Item', 0) - 1].value if 'Item' in col_map else 'N/A'}, "
+                    f"Status={status_cell.value}")
                 for c in row:
                     c.font = red_font
 
