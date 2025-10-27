@@ -503,7 +503,8 @@ def build_structured_df(
     structured_df["On Hand - WIP"] = structured_df["On Hand"] - structured_df.get("Picked_Qty", 0)
 
 
-    # Filter pods that have been locked to SO
+    # Filter pods that have been locked to SO  
+    # ['Name'] represents the Customer, ['Source Name'] represents the Vendor
     filtered = df_pod[~df_pod['Name'].isin([
     'Neousys Technology Incorp.',
     'Amazon',
@@ -566,7 +567,7 @@ def save_not_assigned_so(
     output_path: str = "Not_assigned_SO.xlsx",
     highlight_col: str = "Recommended Restock Qty",
     band_by_col: str = "QB Num",
-    shortage_col: str = "SO_Status",
+    shortage_col: str = "Component_Status",
     shortage_value: str = "Shortage",
     column_widths: dict | None = None,
 ) -> dict:
@@ -636,7 +637,7 @@ def save_not_assigned_so(
     gray_fill    = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
     white_fill   = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
     yellow_fill  = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
-    red_font     = Font(color="FF0000")
+    red_font = Font(color="00FF0000")  # <-- ARGB, full alpha channel
     center_align = Alignment(horizontal="center", vertical="center")
 
     # ---------- banding + shortage red ----------
@@ -689,6 +690,7 @@ def save_not_assigned_so(
     today_str = datetime.today().strftime("%Y-%m-%d")
     ws.title = today_str
 
+
     # ---------- save ----------
     wb.save(output_path)
 
@@ -723,7 +725,7 @@ def main():
 
     # 6) Wirte to Not_assigned_SO.xlsx
     ERP_df= structured[['Order Date', "Name", "P. O. #", "QB Num", "Item", 'Qty(-)', 
-                              "Available + Pre-installed PO", 'Available', "Assigned Q'ty", 'On Hand - WIP', 'On Hand', 'On Sales Order', 'On PO', 'Reorder Pt (Min)', 'Available + On PO', 'Sales/Week', 'Recommended Restock Qty', 'Ship Date', 'Picked']].copy()
+                              "Available + Pre-installed PO", 'Available', "Assigned Q'ty", 'On Hand - WIP', 'On Hand', 'On Sales Order', 'On PO', 'Reorder Pt (Min)', 'Available + On PO', 'Sales/Week', 'Recommended Restock Qty', 'Ship Date', 'Picked', 'Component_Status']].copy()
     ERP_df["Ship Date"] = pd.to_datetime(ERP_df["Ship Date"], errors="coerce")
     assigned_mask = (
     (ERP_df["Ship Date"].dt.month.eq(7)  & ERP_df["Ship Date"].dt.day.eq(4)) |
