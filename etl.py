@@ -456,7 +456,7 @@ def build_structured_df(
     if key_used == "QB Num":
         df_Order_Picked = final_sales_order.merge(word_pick, on="QB Num", how="left")
     elif key_used == "WO_Number":
-        df_Order_Picked = final_sales_order.merge(word_pick, left_on="WO", right_on="WO_Number", how="left").drop(columns=["WO_Number"])
+        df_Order_Picked = final_sales_order.merge(word_pick, left_on="QB Num", right_on="WO_Number", how="left").drop(columns=["WO_Number"])
     else:
         df_Order_Picked = final_sales_order.copy()
         df_Order_Picked["Picked"] = False
@@ -658,11 +658,6 @@ def save_not_assigned_so(
                 c.fill = row_fill
 
             if status_cell.value == shortage_value:
-                    # --- DEBUG INFO ---
-                print(f"[RED ROW] Shortage match found: Row={status_cell.row}, "
-                    f"QB Num={row[band_col_idx - 1].value}, "
-                    f"Item={row[col_map.get('Item', 0) - 1].value if 'Item' in col_map else 'N/A'}, "
-                    f"Status={status_cell.value}")
                 for c in row:
                     c.font = red_font
 
