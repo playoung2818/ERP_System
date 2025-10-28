@@ -743,7 +743,7 @@ def main():
     output_path="Not_assigned_SO.xlsx",
     highlight_col="Recommended Restock Qty",
     band_by_col="QB Num",
-    shortage_col="SO_Status",
+    shortage_col="Component_Status",
     shortage_value="Shortage",
 )
     print(summary)
