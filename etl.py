@@ -785,8 +785,6 @@ if __name__ == "__main__":
 
 # Automatically update the Word-files API
 
-# Reuse a single SQLAlchemy engine.
-
 # Add validate= to merges and require_cols() checks.
 
 # Replace np.inf with a large int sentinel for stable sorting.
