@@ -13,4 +13,5 @@
                   └── No  → [Ask Brenda to place order]
 
 
+<img width="1691" height="567" alt="image" src="https://github.com/user-attachments/assets/29e73d09-1542-4eba-897a-8347ffe51688" />
 
