@@ -1,4 +1,5 @@
 ## Lead Time Assignment Workflow
+<img width="1691" height="567" alt="image" src="https://github.com/user-attachments/assets/995b4df0-06fe-4c86-86a8-ba2ff2670364" />
 
 ```text
 [Receiving WO]
@@ -13,5 +14,5 @@
                   └── No  → [Ask Brenda to place order]
 
 
-<img width="1691" height="567" alt="image" src="https://github.com/user-attachments/assets/29e73d09-1542-4eba-897a-8347ffe51688" />
+
 
