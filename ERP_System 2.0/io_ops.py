@@ -77,6 +77,13 @@ def write_pod(df: pd.DataFrame, schema: str, table: str):
 def write_Shipping_Schedule(df: pd.DataFrame, schema: str, table: str):
     df.to_sql(table, engine(), schema=schema, if_exists="replace", index=False, method="multi", chunksize=10_000)
 
+def write_ledger(df: pd.DataFrame, schema: str, table: str):
+    df.to_sql(table, engine(), schema=schema, if_exists="replace", index=False, method="multi", chunksize=10_000)
+
+def write_Item_Summary(df: pd.DataFrame, schema: str, table: str):
+    df.to_sql(table, engine(), schema=schema, if_exists="replace", index=False, method="multi", chunksize=10_000)
+
+
 # ---------- Google Sheets ----------
 def write_final_sales_order_to_gsheet(df: pd.DataFrame, *,
     spreadsheet_name: str = "PDF_WO",

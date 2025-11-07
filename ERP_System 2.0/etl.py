@@ -1,8 +1,8 @@
 import logging
-from config import DATABASE_DSN, DB_SCHEMA, TBL_INVENTORY, TBL_STRUCTURED, TBL_SALES_ORDER, TBL_POD, TBL_Shipping
+from config import DATABASE_DSN, DB_SCHEMA, TBL_INVENTORY, TBL_STRUCTURED, TBL_SALES_ORDER, TBL_POD, TBL_Shipping, TBL_LEDGER, TBL_ITEM_SUMMARY
 from io_ops import (
     extract_inputs, write_inventory_status, write_sales_order, write_structured,
-    write_pod, write_Shipping_Schedule, write_final_sales_order_to_gsheet,
+    write_pod, write_Shipping_Schedule, write_ledger, write_Item_Summary,write_final_sales_order_to_gsheet,
     save_not_assigned_so, fetch_word_files_df, fetch_pdf_orders_df_from_supabase
 )
 from core import (
@@ -32,7 +32,6 @@ def main():
     # Ledger analytics (optional)
     nav_exp = expand_nav_preinstalled(ship )
     ledger, item_summary, violations = build_ledger(structured, nav_exp, prefer_wip=True)
-    violations.to_excel(r"violations.xlsx", sheet_name="Sheet1", index=False)
     print(violations)
 
     ERP_df= structured[['Order Date', "Name", "P. O. #", "QB Num", "Item", 'Qty(-)', 
@@ -61,6 +60,8 @@ def main():
     write_structured(structured, schema=DB_SCHEMA, table=TBL_STRUCTURED)
     write_pod(pod, schema=DB_SCHEMA, table=TBL_POD)
     write_Shipping_Schedule(ship, schema=DB_SCHEMA, table=TBL_Shipping)
+    write_ledger(ledger, schema=DB_SCHEMA, table=TBL_LEDGER)
+    write_Item_Summary(item_summary, schema=DB_SCHEMA, table=TBL_ITEM_SUMMARY)
     print(f"✅ Loaded:{DB_SCHEMA}.{TBL_SALES_ORDER} rows={len(so_full)}; {DB_SCHEMA}.{TBL_INVENTORY} rows={len(inv)}; {DB_SCHEMA}.{TBL_STRUCTURED} rows={len(structured)}; {DB_SCHEMA}.{TBL_POD} rows={len(pod)}; {DB_SCHEMA}.{TBL_Shipping} rows={len(ship)}")
 
     # Push to Google Sheets
