@@ -32,7 +32,7 @@ def parse_description(desc: str) -> tuple[str, list[str]]:
 
 def parse_component_token(token: str) -> tuple[str, float]:
     """
-    Parses a component token possibly with 'Nx ' prefix.
+    Parses pre-installed component rows, e.g. "2x SSD-1TB"
     Returns (item_code, qty_per_parent).
     """
     m = QTYX_RE.match(token)
