@@ -248,7 +248,7 @@ def build_ledger(SO: pd.DataFrame, NAV_EXP: pd.DataFrame, prefer_wip=True) -> tu
     item_summary["OK"] = item_summary["Min_Projected_NAV"].fillna(0) >= 0
 
     # Full violations table (all negative points)
-    violations = ledger.loc[(ledger["Projected_NAV"]< 0) & (ledger['Date'] != '2099-12-31') & (ledger["Date"].notna())].copy()
+    violations = ledger.loc[(ledger["Projected_NAV"]< 0) & (ledger['Date'] != '2099-12-31') & (ledger["Date"] != '2099-07-04') & (ledger["Date"].notna())].copy()
 
     # nice ordering
     ledger.sort_values(["Item", "Date", "Kind"], inplace=True)

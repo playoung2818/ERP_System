@@ -105,7 +105,10 @@ INDEX_TPL = """
     </div>
     <div class="col-12 d-flex justify-content-between align-items-center">
       <div class="text-muted small">Tip: Enter an SO / QB number or an Item to view its details.</div>
-      <a class="btn btn-sm btn-outline-secondary" href="/">Back to Home</a>
+      <div class="d-flex gap-2">
+        <a class="btn btn-sm btn-outline-primary" href="/inventory_count">Inventory Count</a>
+        <a class="btn btn-sm btn-outline-secondary" href="/">Back to Home</a>
+      </div>
     </div>
   </form>
 
@@ -340,6 +343,187 @@ INDEX_TPL = """
   })();
   </script>
 
+</body>
+</html>
+"""
+
+INVENTORY_TPL = """
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Inventory Count</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    :root{ --ink:#0f172a; --muted:#6b7280; --bg:#f7fafc; --hdr:#f8fafc; }
+    html,body{ background:var(--bg); color:var(--ink); }
+    body{ padding:28px; }
+    .card-lite{ border-radius:14px; box-shadow:0 10px 22px rgba(0,0,0,.06); }
+    .summary{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:1rem; }
+    .metric{ border:1px solid #e2e8f0; border-radius:12px; padding:1rem; background:#fff; }
+    .metric .label{ text-transform:uppercase; font-size:.75rem; letter-spacing:.08em; color:var(--muted); font-weight:600; }
+    .metric .value{ font-size:1.6rem; font-weight:700; }
+    .table-responsive{ max-height:70vh; overflow:auto; }
+    .table thead th{ position:sticky; top:0; z-index:2; background:var(--hdr); }
+  </style>
+  </head>
+<body>
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <div>
+      <div class="h3 m-0">Inventory Count</div>
+      <div class="text-muted small">Loaded {{ loaded_at }}</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-sm btn-outline-secondary" href="/">Home</a>
+    </div>
+  </div>
+
+  <form class="row gy-3 gx-4 align-items-end justify-content-start mb-4" method="get">
+    <div class="col-12 col-md-4">
+      <label class="form-label" for="inv-so">By SO / QB</label>
+      <input id="inv-so" class="form-control form-control-lg" style="height:60px;font-size:1.05rem" name="so" placeholder="SO-20251368 or 20251368" value="{{ so_val or '' }}">
+    </div>
+    <div class="col-12 col-md-4">
+      <label class="form-label" for="inv-item">By Item</label>
+      <input id="inv-item" class="form-control form-control-lg" style="height:60px;font-size:1.05rem" name="item" placeholder="Item (e.g., M.280-SSD-1TB-SATA-TLC5WT-TD)" value="{{ item_val or '' }}">
+    </div>
+    <div class="col-6 col-md-auto">
+      <button class="btn btn-primary px-4 w-100" style="height:52px;font-size:1rem;font-weight:600">Search</button>
+    </div>
+    <div class="col-6 col-md-auto">
+      <a class="btn btn-outline-secondary w-100" style="height:52px;font-size:1rem;font-weight:600" href="/inventory_count?reload=1">Reload</a>
+    </div>
+  </form>
+
+  <div class="summary mb-4">
+    <div class="metric">
+      <div class="label">On Hand</div>
+      <div class="value">{{ on_hand if on_hand is not none else '�?"' }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">On Hand - WIP</div>
+      <div class="value">{{ on_hand_wip if on_hand_wip is not none else '�?"' }}</div>
+    </div>
+  </div>
+
+  <div class="card-lite bg-white">
+    <div class="card-header fw-bold">On Sales Order</div>
+    <div class="card-body">
+      <div class="table-responsive">
+        <table class="table table-sm table-bordered table-hover align-middle">
+          <thead class="table-light text-uppercase small text-muted">
+            <tr>
+              {% for c in so_columns %}
+                <th>{{ c }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% if so_rows %}
+              {% for r in so_rows %}
+                <tr>
+                  {% for c in so_columns %}
+                    {% if c == 'Item' %}
+                      {% set iv = r[c] %}
+                      <td class="nowrap"><a href="#" class="inv-detail-link" data-item="{{ iv | e }}">{{ iv }}</a></td>
+                    {% else %}
+                      <td>{{ r[c] }}</td>
+                    {% endif %}
+                  {% endfor %}
+                </tr>
+              {% endfor %}
+            {% else %}
+              <tr><td colspan="{{ so_columns|length }}" class="text-center text-muted">No rows</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+      <div class="text-muted small">Source: public.wo_structured</div>
+      <div id="inv-item-detail-panel" class="detail-panel" style="display:none; margin-top:1rem; border-radius:14px; box-shadow:0 10px 22px rgba(0,0,0,.06); background:#fff; padding:1.25rem;"></div>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    var panel = document.getElementById('inv-item-detail-panel');
+    if (!panel) return;
+
+    var cache = {};
+
+    function escapeHtml(value) {
+      if (value === null || value === undefined) return '';
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function buildTable(columns, rows) {
+      var safeCols = Array.isArray(columns) ? columns : [];
+      var head = safeCols.map(function (c) { return '<th>' + escapeHtml(c) + '</th>'; }).join('');
+      var body = '';
+      if (Array.isArray(rows) && rows.length) {
+        body = rows.map(function (row) {
+          return '<tr>' + safeCols.map(function (col) {
+            return '<td>' + escapeHtml(row[col]) + '</td>';
+          }).join('') + '</tr>';
+        }).join('');
+      } else {
+        body = '<tr><td colspan="' + (safeCols.length || 1) + '" class="text-center text-muted">No data</td></tr>';
+      }
+      return [
+        '<div class="table-responsive mt-2">',
+          '<table class="table table-sm table-bordered table-hover align-middle">',
+            '<thead class="table-light text-uppercase small text-muted"><tr>' + head + '</tr></thead>',
+            '<tbody>' + body + '</tbody>',
+          '</table>',
+        '</div>'
+      ].join('');
+    }
+
+    function renderSO(item, soData) {
+      var totalText = (soData && (soData.total_on_sales !== null && soData.total_on_sales !== undefined))
+        ? ('On Sales Order: ' + soData.total_on_sales)
+        : '';
+      panel.innerHTML = [
+        '<div class="d-flex justify-content-between flex-wrap gap-2 mb-2">',
+          '<div><h6 class="m-0">On Sales Order — ' + escapeHtml(item) + '</h6></div>',
+          (totalText ? '<div class="small fw-semibold text-primary">' + escapeHtml(totalText) + '</div>' : ''),
+        '</div>',
+        buildTable(soData ? soData.columns : [], soData ? soData.rows : [])
+      ].join('');
+      panel.style.display = 'block';
+      try { panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (_) {}
+    }
+
+    document.addEventListener('click', function (event) {
+      var link = event.target.closest('.inv-detail-link');
+      if (!link) return;
+      event.preventDefault();
+      var item = link.getAttribute('data-item') || '';
+      if (!item) return;
+
+      if (cache[item]) { renderSO(item, cache[item].so); return; }
+
+      panel.style.display = 'block';
+      panel.innerHTML = '<div class="text-muted small">Loading ' + escapeHtml(item) + '…</div>';
+
+      fetch('/api/item_overview?item=' + encodeURIComponent(item))
+        .then(function (resp) { if (!resp.ok) throw new Error('Server error (' + resp.status + ')'); return resp.json(); })
+        .then(function (json) {
+          if (!json.ok) throw new Error(json.error || 'Failed to load item');
+          cache[item] = json;
+          renderSO(item, json.so);
+        })
+        .catch(function (err) {
+          panel.innerHTML = '<div class="alert alert-danger mb-0">Error loading ' + escapeHtml(item) + ': ' + escapeHtml(err.message) + '</div>';
+          panel.style.display = 'block';
+        });
+    });
+  })();
+  </script>
 </body>
 </html>
 """

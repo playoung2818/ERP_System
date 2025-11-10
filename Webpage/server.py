@@ -5,7 +5,7 @@ from flask import Flask, request, render_template_string, jsonify, abort, redire
 import pandas as pd
 from sqlalchemy import create_engine, text
 
-from ui import ERR_TPL, INDEX_TPL, SUBPAGE_TPL, ITEM_TPL
+from ui import ERR_TPL, INDEX_TPL, SUBPAGE_TPL, ITEM_TPL, INVENTORY_TPL
 
 app = Flask(__name__)
 
@@ -110,11 +110,14 @@ def _aggregate_metric(series: pd.Series) -> int | float | None:
     return _coerce_total(total)
 
 def _so_table_for_item(item: str) -> tuple[list[str], list[dict], dict[str, int | float | None]]:
-    need_cols = ["Name", "QB Num", "Item", "Qty(-)", "Ship Date", "Picked"]
+    need_cols = ["Name", "QB Num", "Item", "Qty(-)", "On Hand - WIP", "Ship Date", "Picked"]
     g = SO_INV[SO_INV["Item"] == item].copy()
     for c in need_cols:
         if c not in g.columns:
             g[c] = ""
+    # Fallback for WIP column if missing in data
+    if "On Hand - WIP" not in SO_INV.columns and "In Stock(Inventory)" in SO_INV.columns:
+        g["On Hand - WIP"] = SO_INV.loc[g.index, "In Stock(Inventory)"]
     if "Ship Date" in g.columns:
         ship_dates = pd.to_datetime(g["Ship Date"], errors="coerce")
         g = (
@@ -131,6 +134,39 @@ def _so_table_for_item(item: str) -> tuple[list[str], list[dict], dict[str, int 
         if "On PO" in g.columns:
             totals["on_po"] = _aggregate_metric(g["On PO"])
     return need_cols, rows, totals
+
+def _so_table_for_so(so_num: str, item: str | None = None) -> tuple[list[str], list[dict]]:
+    need_cols = ["Name", "QB Num", "Item", "Qty(-)", "On Hand - WIP", "Ship Date", "Picked"]
+    g = SO_INV.copy()
+    mask = g["QB Num"].astype(str).str.upper() == so_num.upper()
+    if item:
+        mask &= g["Item"].astype(str) == item
+    g = g.loc[mask].copy()
+    for c in need_cols:
+        if c not in g.columns:
+            g[c] = ""
+    # Fallback for WIP column if missing in data
+    if "On Hand - WIP" not in g.columns and "In Stock(Inventory)" in g.columns:
+        g["On Hand - WIP"] = g["In Stock(Inventory)"]
+    if "Ship Date" in g.columns:
+        ship_dates = pd.to_datetime(g["Ship Date"], errors="coerce")
+        g = (
+            g.assign(_ship_date_sort=ship_dates)
+            .sort_values("_ship_date_sort", na_position="last")
+            .drop(columns="_ship_date_sort")
+        )
+        g["Ship Date"] = _to_date_str(g["Ship Date"])
+    rows = g[need_cols].fillna("").astype(str).to_dict(orient="records") if not g.empty else []
+    return need_cols, rows
+
+def _compute_on_hand_metrics(df: pd.DataFrame) -> tuple[int | float | None, int | float | None]:
+    if df is None or df.empty:
+        return None, None
+    on_hand = _aggregate_metric(df.get("On Hand", pd.Series(dtype=float)))
+    # Fall back if "On Hand - WIP" is missing
+    col_wip = "On Hand - WIP" if "On Hand - WIP" in df.columns else ("In Stock(Inventory)" if "In Stock(Inventory)" in df.columns else None)
+    on_hand_wip = _aggregate_metric(df.get(col_wip, pd.Series(dtype=float))) if col_wip else None
+    return on_hand, on_hand_wip
 
 def _po_table_for_item(item: str) -> tuple[list[str], list[dict]]:
     if "Item" not in NAV.columns:
@@ -406,6 +442,58 @@ def item_details():
         extra_note_open_po='Source: public.Open_Purchase_Orders',
         so_total_on_sales=so_totals.get("on_sales_order"),
         so_total_on_po=so_totals.get("on_po"),
+    )
+
+@app.route("/inventory_count")
+def inventory_count():
+    _ensure_loaded()
+    if _LAST_LOAD_ERR:
+        return render_template_string(ERR_TPL, error=_LAST_LOAD_ERR), 503
+
+    if request.args.get("reload") == "1":
+        _load_from_db(force=True)
+
+    so_input = (request.values.get("so") or "").strip()
+    item_input = (request.values.get("item") or "").strip()
+
+    so_num = so_input.upper()
+    if so_num and not so_num.startswith("SO-"):
+        so_num = f"SO-{so_num}"
+
+    so_columns: list[str] | None = None
+    so_rows: list[dict] | None = None
+    on_hand: int | float | None = None
+    on_hand_wip: int | float | None = None
+
+    filtered_df = SO_INV.copy()
+    if item_input:
+        filtered_df = filtered_df[filtered_df["Item"].astype(str) == item_input]
+    if so_num:
+        filtered_df = filtered_df[filtered_df["QB Num"].astype(str).str.upper() == so_num]
+
+    if not filtered_df.empty:
+        on_hand, on_hand_wip = _compute_on_hand_metrics(filtered_df)
+
+    # Build the "On Sales Order" table depending on provided filters
+    if item_input:
+        so_columns, so_rows, _ = _so_table_for_item(item_input)
+        # If SO also provided, further filter rows to that SO
+        if so_num and so_rows:
+            so_rows = [r for r in so_rows if str(r.get("QB Num", "")).upper() == so_num]
+    elif so_num:
+        so_columns, so_rows = _so_table_for_so(so_num)
+    else:
+        so_columns, so_rows = [], []
+
+    return render_template_string(
+        INVENTORY_TPL,
+        loaded_at=_LAST_LOADED_AT.strftime("%Y-%m-%d %H:%M:%S") if _LAST_LOADED_AT else "�?",
+        so_val=so_input,
+        item_val=item_input,
+        on_hand=on_hand,
+        on_hand_wip=on_hand_wip,
+        so_columns=so_columns,
+        so_rows=so_rows,
     )
 
 if __name__ == "__main__":

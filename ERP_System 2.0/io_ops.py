@@ -1,9 +1,11 @@
 from __future__ import annotations
-import os, json, pandas as pd, numpy as np
+import os, json, requests, pandas as pd, numpy as np
 from sqlalchemy import create_engine
 import gspread
 from gspread_dataframe import set_with_dataframe
 from oauth2client.service_account import ServiceAccountCredentials
+
+from core import normalize_wo_number
 
 from config import SALES_ORDER_FILE, WAREHOUSE_INV_FILE, SHIPPING_SCHEDULE_FILE, POD_FILE, DATABASE_DSN
 
@@ -20,8 +22,6 @@ def extract_inputs():
     return df_sales_order, inventory_df, df_shipping_schedule, df_pod
 
 def fetch_word_files_df(api_url: str) -> pd.DataFrame:
-    import requests, re
-    from core import normalize_wo_number
     try:
         r = requests.get(api_url, timeout=10)
         r.raise_for_status()
@@ -62,27 +62,8 @@ def fetch_pdf_orders_df_from_supabase(dsn: str) -> pd.DataFrame:
     return pd.DataFrame(all_rows, columns=["WO", "Product Number"])
 
 # ---------- Load (DB) ----------
-def write_inventory_status(df: pd.DataFrame, schema: str, table: str):
+def write_to_db(df: pd.DataFrame, schema: str, table: str):
     df.to_sql(table, engine(), schema=schema, if_exists="replace", index=False, method="multi", chunksize=10_000)
-
-def write_sales_order(df: pd.DataFrame, schema: str, table: str):
-    df.to_sql(table, engine(), schema=schema, if_exists="replace", index=False, method="multi", chunksize=10_000)
-
-def write_structured(df: pd.DataFrame, schema: str, table: str):
-    df.to_sql(table, engine(), schema=schema, if_exists="replace", index=False, method="multi", chunksize=10_000)
-
-def write_pod(df: pd.DataFrame, schema: str, table: str):
-    df.to_sql(table, engine(), schema=schema, if_exists="replace", index=False, method="multi", chunksize=10_000)
-
-def write_Shipping_Schedule(df: pd.DataFrame, schema: str, table: str):
-    df.to_sql(table, engine(), schema=schema, if_exists="replace", index=False, method="multi", chunksize=10_000)
-
-def write_ledger(df: pd.DataFrame, schema: str, table: str):
-    df.to_sql(table, engine(), schema=schema, if_exists="replace", index=False, method="multi", chunksize=10_000)
-
-def write_Item_Summary(df: pd.DataFrame, schema: str, table: str):
-    df.to_sql(table, engine(), schema=schema, if_exists="replace", index=False, method="multi", chunksize=10_000)
-
 
 # ---------- Google Sheets ----------
 def write_final_sales_order_to_gsheet(df: pd.DataFrame, *,
@@ -103,7 +84,7 @@ def write_final_sales_order_to_gsheet(df: pd.DataFrame, *,
     except Exception: pass
     print(f"✅ Wrote {len(df)} rows to Google Sheet → {spreadsheet_name} / {worksheet_name}")
 
-# ---------- Excel styling helper you already have ----------
+# ---------- Excel styling helper functions ----------
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl import load_workbook
 from datetime import datetime
@@ -111,7 +92,7 @@ from datetime import datetime
 def save_not_assigned_so(
     df: pd.DataFrame,
     output_path: str = "Not_assigned_SO.xlsx",
-    highlight_col: str = "Recommended Restock Qty",
+    highlight_cols: str | list[str] = "Recommended Restock Qty",
     band_by_col: str = "QB Num",
     shortage_col: str = "Component_Status",
     shortage_value: str = "Shortage",
@@ -134,15 +115,17 @@ def save_not_assigned_so(
             'Order Date': 15,
             "Item": 30,
             "Name": 25,
-            "P. O. #": 15,
+            "P. O. #": 5,
             "QB Num": 15,
             "Qty(-)": 10,
             "Available": 15,
             'Available + Pre-installed PO': 25,
-            'On Hand - WIP': 20,
-            'Reorder Pt (Min)': 15,
-            'Recommended Restock Qty': 20,
+            'On Hand - WIP': 17,
+            'Recommended Restock Qty': 25,
             'On Sales Order': 15,
+            'Available + On PO': 20,
+            "Assigned Q'ty": 15,
+            "Sales/Week": 15, 
         }
 
     # ---------- ensure workbook exists; if not, create with a temp sheet ----------
@@ -208,15 +191,16 @@ def save_not_assigned_so(
                     c.font = red_font
 
     # ---------- highlight target column (cells > 0) ----------
-    if highlight_col in col_map:
-        h_idx = col_map[highlight_col]
-        for (cell,) in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=h_idx, max_col=h_idx):
-            try:
-                val = float(cell.value)
-            except (TypeError, ValueError):
-                val = 0.0
-            if val > 0:
-                cell.fill = yellow_fill  # override banding for this cell
+    for highlight_col in highlight_cols:
+        if highlight_col in col_map:
+            h_idx = col_map[highlight_col]
+            for (cell,) in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=h_idx, max_col=h_idx):
+                try:
+                    val = float(cell.value)
+                except (TypeError, ValueError):
+                    val = 0.0
+                if val > 0:
+                    cell.fill = yellow_fill  # override banding for this cell
 
     # ---------- set column widths ----------
     for name, width in column_widths.items():
@@ -225,7 +209,7 @@ def save_not_assigned_so(
             ws.column_dimensions[letter].width = width
 
     # ---------- center-align a few common numeric columns ----------
-    for name in ["Qty", "Available + Pre-installed PO", "Available"]:
+    for name in ["Qty(-)", "Available + Pre-installed PO", "Available", "Available + On PO", "Sales/Week", "Recommended Restock Qty"]:
         if name in col_map:
             idx = col_map[name]
             for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=idx, max_col=idx):

@@ -6,6 +6,7 @@ mappings = {
     'GC-J-A64GB-O-Industrial-Nvidia': 'GC-Jetson-AGX64GB-Orin-Industrial-Nvidia-JetPack-6.0',
     'GC-Jetson-AGX64GB-Orin-Nvidia': 'GC-Jetson-AGX64GB-Orin-Nvidia-JetPack-6.0',
     'AccsyBx-Cardholder-10108GC-5080': 'AccsyBx-Cardholder-10108GC-5080_70_70Ti',
+    'AccsyBx-Cardholder-10208GC-5080' : 'AccsyBx-Cardholder-10208GC-5080_70_70Ti',
     'Cblkit-FP-NRU-230V-AWP_NRU-240S': 'Cblkit-FP-NRU-230V-AWP_NRU-240S-AWP',
     'E-mPCIe-GPS-M800_Mod_40CM': 'Extnd-mPCIeHS_GPS-M800_Mod_Cbl-40CM_kits',
     'Cbl-M12A5F-OT2-B-Red-Fuse-100CM': 'Cbl-M12A5F-OT2-Black-Red-Fuse-100CM',
@@ -18,15 +19,18 @@ mappings = {
     'E-mPCIe-BTWifi-WT-6218_Mod_40CM': 'Extnd-mPCIeHS-BTWifi-WT-6218_Mod_Cbl-40CM_kits',
     'GC-Jetson-NX16G-Orin-Nvidia': 'GC-Jetson-NX16G-Orin-Nvidia-JetPack6.0',
     'FPnl-3Ant-NRU-170-PPC series': 'FPnl-3Ant-NRU-170-PPCseries',
+
 }
 
 # ---------- small utils ----------
 def normalize_wo_number(wo: str) -> str:
+    """
+    Normalize a Work Order number by extracting the 8-digit number starting with year (e.g. "SO-20250975")
+    and returning it in the format "SO-<year><number>".
+    """
     m = re.search(r'\b(20\d{6})\b', str(wo))
     return f"SO-{m.group(1)}" if m else str(wo)
 
-def _norm_dash_series(s: pd.Series) -> pd.Series:
-    return s.str.replace(r"[\u2012\u2013\u2014\u2212]", "-", regex=True)
 
 def enforce_column_order(df: pd.DataFrame, order: list[str]) -> pd.DataFrame:
     front = [c for c in order if c in df.columns]
@@ -46,7 +50,6 @@ def _norm_cols(df: pd.DataFrame) -> pd.DataFrame:
             df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
     return df
 
-# ---------- transform_* (paste your existing ones, lightly adjusted to import mappings) ----------
 # --------------------
 # Transform 
 # --------------------
@@ -331,3 +334,36 @@ def build_structured_df(
         structured_df[col] = pd.to_datetime(structured_df[col], errors="coerce").dt.date
 
     return structured_df, final_sales_order
+
+
+#  Create Dataframe for LT assignment purpose
+def prepare_erp_view(structured: pd.DataFrame) -> pd.DataFrame:
+    """
+    Selects key ERP columns, ensures 'Ship Date' is datetime,
+    and flags 'Not_assigned_SO' based on placeholder dates (7/4, 12/31).
+    """
+    # --- select necessary columns ---
+    cols = [
+        'Order Date', 'Name', 'QB Num', 'Item', 'Qty(-)',
+        'Available', 'Available + On PO', 'Sales/Week','Recommended Restock Qty', 
+        'Available + Pre-installed PO', 'On Hand - WIP', "Assigned Q'ty", 
+        'On Hand', 'On Sales Order', 'On PO', 'Component_Status', 'P. O. #', 'Ship Date'
+    ]
+    df = structured.copy()
+    for c in cols:
+        if c not in df.columns:
+            df[c] = pd.NA
+    ERP_df = df[cols].copy()
+
+    # --- make sure Ship Date is datetime ---
+    ERP_df["Ship Date"] = pd.to_datetime(ERP_df["Ship Date"], errors="coerce")
+
+    # --- flag “not assigned” SOs (using 7/4 or 12/31 placeholders) ---
+    mask = (
+        (ERP_df["Ship Date"].dt.month.eq(7)  & ERP_df["Ship Date"].dt.day.eq(4)) |
+        (ERP_df["Ship Date"].dt.month.eq(12) & ERP_df["Ship Date"].dt.day.eq(31))
+    )
+
+    ERP_df["AssignedFlag"] = ~mask  # True = valid Ship Date, False = placeholder
+
+    return ERP_df
