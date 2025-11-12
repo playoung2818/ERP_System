@@ -80,6 +80,7 @@ def transform_pod(df_pod: pd.DataFrame) -> pd.DataFrame:
     pod = df_pod.drop(columns=['Amount','Open Balance',"Rcv'd","Qty"], axis =1)
     pod.rename(columns={"Date":"Order Date","Num":"QB Num","Backordered":"Qty(+)"},inplace=True)
     pod = pod.drop(pod.columns[[0]], axis =1)
+    # pod = pod[pod['Name'] == 'Neousys Technology Incorp.'].copy()
     pod = pod.dropna(axis=0, how='all',subset=None, inplace=False)
     pod = pod.dropna(thresh=5)
     pod['Memo'] = pod['Memo'].str.split(' ',expand=True)[0]
@@ -325,7 +326,16 @@ def build_structured_df(
 ).astype(int)
 
     ## Define Component Status
-    structured_df["Component_Status"] = np.where((structured_df["Available + Pre-installed PO"] >= 0) & (structured_df["On Hand"] > 0), "Available", "Shortage") #Available or Shortage   
+    structured_df["Component_Status"] = np.where(
+    (structured_df["Available"] >= 0) & (structured_df["On Hand"] > 0),
+    "Available",
+    np.where(
+        (structured_df["Available"] + structured_df["On PO"] > 0),
+        "Waiting",
+        "Shortage"
+    )
+)
+   
     structured_df["Qty(+)"] = "0"
     structured_df['Pre/Bare'] = "Out"
 
@@ -367,3 +377,46 @@ def prepare_erp_view(structured: pd.DataFrame) -> pd.DataFrame:
     ERP_df["AssignedFlag"] = ~mask  # True = valid Ship Date, False = placeholder
 
     return ERP_df
+
+
+def _norm_key(s: pd.Series) -> pd.Series:
+    # robust, null-safe, dtype-safe key normalizer
+    s = s.astype("string")              # pandas StringDtype, keeps <NA>
+    s = s.str.strip().str.upper()
+    return s
+
+def add_onhand_minus_wip(inv: pd.DataFrame, structured: pd.DataFrame) -> pd.DataFrame:
+    out = inv.copy()
+
+    # Ensure needed columns exist and are numeric
+    if "On Hand" not in out.columns:
+        out["On Hand"] = 0
+    out["On Hand"] = pd.to_numeric(out["On Hand"], errors="coerce").fillna(0.0)
+
+    # --- normalize join key 'Item' on BOTH dataframes ---
+    out["__ITEM_KEY__"] = _norm_key(out.get("Item", pd.Series(pd.NA, index=out.index)))
+    st = structured.copy()
+    st["__ITEM_KEY__"] = _norm_key(st.get("Item", pd.Series(pd.NA, index=st.index)))
+
+    # Compute WIP from structured (sum of Assigned Q'ty per normalized item)
+    if "Assigned Q'ty" in st.columns:
+        st["Assigned Q'ty"] = pd.to_numeric(st["Assigned Q'ty"], errors="coerce").fillna(0.0)
+        wip = (
+            st.loc[st["Assigned Q'ty"].ne(0), ["__ITEM_KEY__", "Assigned Q'ty"]]
+              .groupby("__ITEM_KEY__", as_index=False)["Assigned Q'ty"].sum()
+              .rename(columns={"Assigned Q'ty": "WIP"})
+        )
+    else:
+        wip = pd.DataFrame({"__ITEM_KEY__": out["__ITEM_KEY__"].unique(), "WIP": 0.0})
+
+    # Merge on the normalized key (both are StringDtype now)
+    out = out.merge(wip, on="__ITEM_KEY__", how="left")
+    out["WIP"] = out["WIP"].fillna(0.0)
+
+    # Derive 'On Hand - WIP'
+    out["On Hand - WIP"] = out["On Hand"] - out["WIP"]
+
+    # Clean up helper column
+    out.drop(columns=["__ITEM_KEY__"], inplace=True)
+
+    return out

@@ -6,7 +6,7 @@ from io_ops import (
 )
 from core import (
     transform_sales_order, transform_inventory, transform_pod, transform_shipping,
-    build_structured_df, prepare_erp_view
+    build_structured_df, prepare_erp_view, add_onhand_minus_wip
 )
 from ledger import build_ledger, expand_nav_preinstalled
 import pandas as pd
@@ -28,6 +28,9 @@ def main():
     # Structured output
     structured, final_sales_order = build_structured_df(so_full, word_files_df, inv, pdf_orders_df, pod)
 
+    # Add "On Hand - WIP" efficiently (vectorized)
+    inv = add_onhand_minus_wip(inv, structured)
+
     # Ledger analytics (optional)
     nav_exp = expand_nav_preinstalled(ship )
     ledger, item_summary, violations = build_ledger(structured, nav_exp, prefer_wip=True)
@@ -42,7 +45,7 @@ def main():
     summary = save_not_assigned_so(
         Not_assigned_SO.copy(),
         output_path= r"C:\Users\Admin\OneDrive - neousys-tech\Desktop\Python\ERP_System\Not_assigned_SO.xlsx",
-        highlight_col="Recommended Restock Qty",
+        highlight_cols="Recommended Restock Qty",
         band_by_col="QB Num",
         shortage_col="Component_Status",
         shortage_value="Shortage",

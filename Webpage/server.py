@@ -1,7 +1,7 @@
 # server.py
 import os
 from datetime import datetime
-from flask import Flask, request, render_template_string, jsonify, abort, redirect, url_for
+from flask import Flask, request, render_template_string, jsonify, abort, redirect, url_for, send_file, Response
 import pandas as pd
 from sqlalchemy import create_engine, text
 
@@ -27,6 +27,14 @@ NAV: pd.DataFrame | None = None
 OPEN_PO: pd.DataFrame | None = None
 _LAST_LOAD_ERR: str | None = None
 _LAST_LOADED_AT: datetime | None = None
+
+# =========================
+# PDF settings/cache
+# =========================
+# Configure a root folder that contains PDF files named by order id (e.g. SO-12345.pdf)
+PDF_FOLDER = os.getenv("PDF_FOLDER", "")
+# Map of order_id (stem of filename) -> {file_name, file_path}
+PDF_MAP: dict[str, dict[str, str]] = {}
 
 TABLE_HEADER_LABELS = {
     "Item": "Item",
@@ -58,6 +66,72 @@ def _read_table(schema: str, table: str) -> pd.DataFrame:
     sql = f'SELECT * FROM "{schema}"."{table}"'
     return pd.read_sql_query(text(sql), con=engine)
 
+# ---------- PDF DB helpers (no Flask-SQLAlchemy) ----------
+def _pdf_db_search_by_filename(search_query: str, limit: int = 10) -> list[dict]:
+    """Search pdf_file_log by file_name ILIKE %search_query% using SQLAlchemy Core.
+    Returns list of dict rows; empty if table missing or error.
+    """
+    if not search_query:
+        return []
+    try:
+        sql = text(
+            'SELECT id, order_id, file_name, file_path, extracted_data '
+            'FROM "public"."pdf_file_log" WHERE file_name ILIKE :q '
+            'ORDER BY id DESC LIMIT :lim'
+        )
+        with engine.connect() as conn:
+            res = conn.execute(sql, {"q": f"%{search_query}%", "lim": limit})
+            return [dict(row) for row in res.mappings().all()]
+    except Exception:
+        # Table might not exist, or permissions issues; return empty silently
+        return []
+
+def _pdf_db_get_by_id(pdf_id: int) -> dict | None:
+    try:
+        sql = text(
+            'SELECT id, order_id, file_name, file_path, extracted_data '
+            'FROM "public"."pdf_file_log" WHERE id = :id'
+        )
+        with engine.connect() as conn:
+            res = conn.execute(sql, {"id": pdf_id})
+            row = res.mappings().first()
+            return dict(row) if row else None
+    except Exception:
+        return None
+def _validate_paths(paths: list[str]):
+    for p in paths:
+        if not os.path.exists(p):
+            # Using print to avoid coupling to any logger; environment prints to console
+            print(f"[pdf] Path does not exist: {p}")
+        else:
+            print(f"[pdf] Valid path: {p}")
+
+def _scan_pdf_folder(folder_path: str) -> dict[str, dict[str, str]]:
+    data: dict[str, dict[str, str]] = {}
+    if not folder_path:
+        return data
+    if not os.path.isdir(folder_path):
+        print(f"[pdf] PDF_FOLDER is not a directory: {folder_path}")
+        return data
+    for root, _dirs, files in os.walk(folder_path):
+        for name in files:
+            if name.lower().endswith(".pdf"):
+                path = os.path.join(root, name)
+                order_id = os.path.splitext(name)[0]
+                data[order_id.upper()] = {"file_name": name, "file_path": path}
+    print(f"[pdf] scanned {len(data)} PDF(s) under {folder_path}")
+    return data
+
+def _load_pdf_map(force: bool = False):
+    global PDF_MAP
+    if PDF_MAP and not force:
+        return
+    if PDF_FOLDER:
+        _validate_paths([PDF_FOLDER])
+        PDF_MAP = _scan_pdf_folder(PDF_FOLDER)
+    else:
+        PDF_MAP = {}
+
 def _load_from_db(force: bool = False):
     global SO_INV, NAV, OPEN_PO, _LAST_LOAD_ERR, _LAST_LOADED_AT
     try:
@@ -85,6 +159,8 @@ def _load_from_db(force: bool = False):
 def _ensure_loaded():
     if SO_INV is None or NAV is None or OPEN_PO is None:
         _load_from_db(force=True)
+    # Load PDF map on demand as well
+    _load_pdf_map()
 
 def lookup_on_po_by_item(item: str) -> int | None:
     df = SO_INV[SO_INV["Item"] == item]
@@ -231,6 +307,7 @@ _load_from_db(force=True)
 def index():
     if request.args.get("reload") == "1":
         _load_from_db(force=True)
+        _load_pdf_map(force=True)
     _ensure_loaded()
     if _LAST_LOAD_ERR:
         return render_template_string(ERR_TPL, error=_LAST_LOAD_ERR), 503
@@ -281,6 +358,40 @@ def index():
             "fields": summary_fields,
         }
 
+        # Attach PDF link by DB search first (ILIKE on filename); fallback to filesystem map
+        po_num = ""
+        if "P. O. #" in rows_df.columns:
+            ser = rows_df["P. O. #"].dropna().astype(str)
+            po_num = ser.iloc[0] if not ser.empty else ""
+
+        search_keys = [so_num]
+        if so_num.upper().startswith("SO-"):
+            search_keys.append(so_num[3:])  # numeric only
+        if po_num:
+            search_keys.append(str(po_num))
+
+        pdf_record = None
+        for key in search_keys:
+            recs = _pdf_db_search_by_filename(key, limit=1)
+            if recs:
+                pdf_record = recs[0]
+                break
+
+        if pdf_record:
+            order_summary["pdf_url"] = f"/pdfid/{pdf_record['id']}"
+            order_summary["pdf_name"] = pdf_record.get("file_name")
+        else:
+            # Fallback to filesystem map (exact filename stems)
+            keys_to_try = [so_num, so_num.replace("SO-", ""), so_num.replace("SO", "").strip("- ")]
+            pdf_info = None
+            for k in keys_to_try:
+                pdf_info = PDF_MAP.get(k.upper())
+                if pdf_info:
+                    break
+            if pdf_info:
+                order_summary["pdf_url"] = f"/pdf/{(pdf_info['file_name'][:-4])}"
+                order_summary["pdf_name"] = pdf_info["file_name"]
+
         for c in ("Ship Date", "Order Date"):
             if c in rows_df.columns: rows_df[c] = _to_date_str(rows_df[c])
         table_headers = [h for h in required_headers if h not in ("Order Date","Name","P. O. #","QB Num","Ship Date")]
@@ -307,9 +418,69 @@ def index():
 @app.route("/api/reload", methods=["POST"])
 def api_reload():
     _load_from_db(force=True)
+    _load_pdf_map(force=True)
     if _LAST_LOAD_ERR:
         return jsonify({"ok": False, "error": _LAST_LOAD_ERR}), 500
     return jsonify({"ok": True, "loaded_at": _LAST_LOADED_AT.isoformat()})
+
+@app.route("/pdf/<order_id>")
+def serve_pdf(order_id: str):
+    """Serve a PDF by order id (stem of filename). Only serves files under PDF_FOLDER.
+    """
+    _load_pdf_map()
+    if not PDF_FOLDER:
+        abort(404)
+    info = PDF_MAP.get(order_id.upper())
+    if not info:
+        # try variants: with SO- prefix or stripped
+        variants = [order_id, f"SO-{order_id}", order_id.replace("SO-", ""), order_id.replace("SO", "").strip("- ")]
+        for v in variants:
+            info = PDF_MAP.get(v.upper())
+            if info:
+                break
+    if not info:
+        abort(404)
+    path = info["file_path"]
+    if not os.path.isfile(path):
+        abort(404)
+    # Send file directly; let browser handle PDF
+    return send_file(path, mimetype="application/pdf", as_attachment=False, download_name=info["file_name"])
+
+@app.route("/favicon.ico")
+def favicon():
+    """Serve favicon from static if present, else fallback to inline SVG."""
+    static_ico = os.path.join(app.root_path, "static", "favicon.ico")
+    if os.path.isfile(static_ico):
+        return send_file(static_ico, mimetype="image/x-icon")
+    # Fallback simple SVG
+    svg = (
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
+        "<rect width='64' height='64' rx='12' fill='#0d6efd'/>"
+        "<text x='50%' y='52%' dominant-baseline='middle' text-anchor='middle'"
+        " font-family='Segoe UI, Roboto, Arial, sans-serif' font-size='34' fill='white'>LT</text>"
+        "</svg>"
+    )
+    return Response(svg, mimetype="image/svg+xml")
+
+@app.route("/pdfid/<int:pdf_id>")
+def serve_pdf_by_id(pdf_id: int):
+    """Serve a PDF using a record in pdf_file_log by id."""
+    rec = _pdf_db_get_by_id(pdf_id)
+    if not rec:
+        abort(404)
+    path = rec.get("file_path")
+    name = rec.get("file_name") or os.path.basename(path or "") or f"file-{pdf_id}.pdf"
+    if not path or not os.path.isfile(path):
+        abort(404)
+    return send_file(path, mimetype="application/pdf", as_attachment=False, download_name=name)
+
+@app.route("/api/pdf_search")
+def api_pdf_search():
+    q = (request.args.get("q") or request.args.get("query") or "").strip()
+    if not q:
+        return jsonify({"ok": False, "error": "Missing query"}), 400
+    rows = _pdf_db_search_by_filename(q, limit=50)
+    return jsonify({"ok": True, "count": len(rows), "rows": rows})
 
 @app.route("/api/item_overview")
 def api_item_overview():
@@ -498,4 +669,6 @@ def inventory_count():
 
 if __name__ == "__main__":
     # Flask dev server
+    # Preload PDF map on startup for faster first-hit
+    _load_pdf_map(force=True)
     app.run(debug=True, host="0.0.0.0", port=5002)

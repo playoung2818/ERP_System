@@ -5,6 +5,7 @@ ERR_TPL = """
 <head>
   <meta charset="utf-8">
   <title>Data Error</title>
+  <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
     :root{ --ink:#1f2937; --muted:#64748b; }
@@ -31,6 +32,7 @@ INDEX_TPL = """
 <!doctype html>
 <html>
 <head>
+  <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
   <meta charset="utf-8">
   <title>LT Check — DB</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -122,10 +124,17 @@ INDEX_TPL = """
       {% for field in order_summary.fields %}
         <div class="summary-field">
           <div class="summary-label">{{ field.label }}</div>
-          <div class="summary-value">{{ field.value or "—" }}</div>
+          <div class="summary-value">{{ field.value or "-" }}</div>
         </div>
       {% endfor %}
     </div>
+    {% if order_summary.pdf_url %}
+    <div class="mt-3">
+      <a class="btn btn-sm btn-outline-primary" href="{{ order_summary.pdf_url }}" target="_blank">
+        Open PDF{% if order_summary.pdf_name %} ({{ order_summary.pdf_name }}){% endif %}
+      </a>
+    </div>
+    {% endif %}
   </div>
   {% endif %}
 
@@ -351,6 +360,7 @@ INVENTORY_TPL = """
 <!doctype html>
 <html>
 <head>
+  <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
   <meta charset="utf-8">
   <title>Inventory Count</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -532,6 +542,7 @@ SUBPAGE_TPL = """
 <!doctype html>
 <html>
 <head>
+  <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
   <meta charset="utf-8">
   <title>{{ title }}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -621,6 +632,7 @@ ITEM_TPL = """
 <!doctype html>
 <html>
 <head>
+  <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
   <meta charset="utf-8">
   <title>Item Detail — {{ item }}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
