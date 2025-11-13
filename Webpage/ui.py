@@ -41,6 +41,7 @@ INDEX_TPL = """
       --ink:#0f172a; --muted:#6b7280; --bg:#f7fafc;
       --ok-bg:#e7f8ed; --ok-fg:#137a2a;
       --warn-bg:#ffecec; --warn-fg:#a61b1b;
+      --wait-bg:#fff3cd; --wait-fg:#664d03;
       --hdr:#f8fafc;
     }
     html,body{ background:var(--bg); color:var(--ink); }
@@ -61,6 +62,7 @@ INDEX_TPL = """
     .badge-pill{ display:inline-block; padding:.25rem .6rem; border-radius:999px; font-weight:600; }
     .badge-ok{ background:var(--ok-bg); color:var(--ok-fg); }
     .badge-warn{ background:var(--warn-bg); color:var(--warn-fg); }
+    .badge-wait{ background:var(--wait-bg); color:var(--wait-fg); }
     .num-center{ text-align:center; font-variant-numeric: tabular-nums; }
     .blue-cell{ color:#0d6efd; font-weight:600; }
     .num-center{ text-align:center; font-variant-numeric: tabular-nums; }
@@ -155,7 +157,14 @@ INDEX_TPL = """
           </thead>
           <tbody>
             {% for r in rows %}
-              {% set status_badge = 'badge-ok' if r.get('Component_Status') == 'Available' else 'badge-warn' %}
+              {% set _status = r.get('Component_Status') %}
+              {% if _status == 'Available' %}
+                {% set status_badge = 'badge-ok' %}
+              {% elif _status == 'Waiting' %}
+                {% set status_badge = 'badge-wait' %}
+              {% else %}
+                {% set status_badge = 'badge-warn' %}
+              {% endif %}
               <tr>
               {% for h in headers %}
                 {% if h == 'On Sales Order' %}
