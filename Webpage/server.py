@@ -169,6 +169,21 @@ def lookup_on_po_by_item(item: str) -> int | None:
     s = pd.to_numeric(df["On PO"], errors="coerce").dropna()
     return int(s.iloc[0]) if not s.empty else None
 
+def lookup_on_sales_by_item(item: str) -> int | float | None:
+    df = SO_INV[SO_INV["Item"] == item]
+    col_name = None
+    for candidate in ("On Sales Order", "On Sales", "On SO"):
+        if candidate in df.columns:
+            col_name = candidate
+            break
+    if not col_name:
+        return None
+    s = pd.to_numeric(df[col_name], errors="coerce").dropna()
+    if s.empty:
+        return None
+    first = s.iloc[0]
+    return int(first) if s.eq(first).all() else int(s.sum())
+
 def _coerce_total(val):
     if pd.isna(val):
         return None
@@ -651,6 +666,21 @@ def inventory_count():
         # If SO also provided, further filter rows to that SO
         if so_num and so_rows:
             so_rows = [r for r in so_rows if str(r.get("QB Num", "")).upper() == so_num]
+        # Add extra columns for Inventory module view
+        on_so_val = lookup_on_sales_by_item(item_input)
+        on_po_val = lookup_on_po_by_item(item_input)
+        if so_rows is None:
+            so_rows = []
+        for r in so_rows:
+            if on_so_val is not None:
+                r["On SO"] = on_so_val
+            if on_po_val is not None:
+                r["On PO"] = on_po_val
+        if so_columns is None:
+            so_columns = []
+        for extra in ("On SO", "On PO"):
+            if extra not in so_columns:
+                so_columns.append(extra)
     elif so_num:
         so_columns, so_rows = _so_table_for_so(so_num)
     else:
@@ -666,6 +696,22 @@ def inventory_count():
         so_columns=so_columns,
         so_rows=so_rows,
     )
+
+@app.route("/api/item_suggest")
+def api_item_suggest():
+    _ensure_loaded()
+    q = (request.args.get("q") or request.args.get("query") or "").strip()
+    if not q:
+        return jsonify({"ok": True, "items": []})
+    try:
+        items = SO_INV["Item"].astype(str).dropna().unique().tolist()
+        ql = q.lower()
+        starts = [i for i in items if i.lower().startswith(ql)]
+        contains = [i for i in items if ql in i.lower() and i not in starts]
+        out = (starts + contains)[:20]
+        return jsonify({"ok": True, "items": out})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 if __name__ == "__main__":
     # Flask dev server

@@ -32,7 +32,7 @@ def main():
     inv = add_onhand_minus_wip(inv, structured)
 
     # Ledger analytics (optional)
-    nav_exp = expand_nav_preinstalled(ship )
+    nav_exp = expand_nav_preinstalled(ship)
     ledger, item_summary, violations = build_ledger(structured, nav_exp, prefer_wip=True)
     print(violations)
 

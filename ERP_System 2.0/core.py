@@ -55,6 +55,7 @@ def _norm_cols(df: pd.DataFrame) -> pd.DataFrame:
 # --------------------
 def transform_sales_order(df_sales_order: pd.DataFrame) -> pd.DataFrame:
     df = df_sales_order.copy()
+    df["partial"] = df["Qty"] != df["Backordered"]
     df = df.drop(columns = ['Qty', 'Item'])
     df = df.rename(columns={"Unnamed: 0": "Item", "Num": "QB Num", "Backordered": "Qty(-)", "Date":"Order Date"})
     df["Item"] = df["Item"].ffill().astype(str).str.strip()
@@ -99,7 +100,7 @@ def transform_pod(df_pod: pd.DataFrame) -> pd.DataFrame:
 
 def transform_shipping(df_shipping_schedule: pd.DataFrame) -> pd.DataFrame:
 
-    df = df_shipping_schedule.copy()
+    df = df_shipping_schedule[df_shipping_schedule['Ship to'] == 'Neousys Technology America, Inc.'].copy()
 
     # --- make sure the columns exist (create empty ones if missing) ---
     need = ['SO NO.', 'Customer PO No.', 'Model Name', 'Ship Date', 'Qty', 'Description']
@@ -179,171 +180,195 @@ def build_structured_df(
     df_pod: pd.DataFrame
 ) -> pd.DataFrame:
 
-    # Build df_out from Sales Order (standardize to these final names)
+    # -----------------------------
+    # 1) Standardize Sales Order -> df_out
+    # -----------------------------
     needed_cols = {
         "Order Date": "SO Entry Date",
         "Name": "Customer",
         "P. O. #": "Customer PO",
         "QB Num": "QB Num",
-        "Item": "Item",                # <- part key
-        "Qty(-)": "Qty",               # <- create Qty from Backordered/Qty(-)
-        "Ship Date": "Lead Time"       # <- keep the name used later
+        "Item": "Item",                # part key
+        "Qty(-)": "Qty",               # demand qty (rename to Qty)
+        "Ship Date": "Lead Time"
     }
     for src in list(needed_cols.keys()):
         if src not in df_sales_order.columns:
             df_sales_order[src] = "" if src not in ("Qty(-)",) else 0
 
-    df_out = df_sales_order.rename(columns=needed_cols)[list(needed_cols.values())].copy()
+    df_out = (
+        df_sales_order
+        .rename(columns=needed_cols)[list(needed_cols.values())]
+        .copy()
+    )
 
-    # Keep an auxiliary WO column if source has it (for 'Picked' merge fallback)
+    # Keep auxiliary WO (for merge fallback)
+    df_out["WO"] = ""
     for alt in ["WO", "WO_Number", "NTA Order ID", "SO Number"]:
         if alt in df_sales_order.columns:
             df_out["WO"] = df_sales_order[alt].astype(str).apply(normalize_wo_number)
             break
-    if "WO" not in df_out.columns:
-        df_out["WO"] = ""
 
-    # Sort to group visually
-    df_out = df_out.sort_values(['QB Num', 'Item']).reset_index(drop=True)
+    df_out = df_out.sort_values(["QB Num", "Item"]).reset_index(drop=True)
 
-    # Rename the PDF reference to match our new keys
-    pdf_ref = pdf_orders_df.rename(columns={'WO': 'QB Num', 'Product Number': 'Item'})
+    # Align PDF refs (WO->QB Num, Product Number->Item), then reorder df_out by your PDF order
+    pdf_ref = pdf_orders_df.rename(columns={"WO": "QB Num", "Product Number": "Item"})
     final_sales_order = reorder_df_out_by_output(pdf_ref, df_out)
 
-    # Map the short->long part names
-    final_sales_order['Item'] = final_sales_order['Item'].replace(mappings)
+    # Map short->long names, drop dup columns if any
+    final_sales_order["Item"] = final_sales_order["Item"].replace(mappings)
     final_sales_order = final_sales_order.loc[:, ~final_sales_order.columns.duplicated()]
 
-
-    # Merge “Picked” status (collapse per order key)
+    # -----------------------------
+    # 2) Merge Pick status from Word files
+    #    Step A: baseline Picked/No
+    #    Step B: upgrade to Partial when backordered > 0
+    # -----------------------------
     word_pick = word_files_df.copy()
-    key_used = None
+    word_pick["WO_Number"] = word_pick["WO_Number"].astype(str).apply(normalize_wo_number)
 
-    if "QB Num" in word_pick.columns:
-        key_used = "QB Num"
-    elif "WO_Number" in word_pick.columns:
-        key_used = "WO_Number"
-        # normalize to SO-######## format
-        word_pick["WO_Number"] = word_pick["WO_Number"].astype(str).apply(normalize_wo_number)
+    word_pick["Picked_Flag"] = word_pick["status"].astype(str).str.strip().eq("Picked")
+    word_pick = word_pick.groupby("WO_Number", as_index=False)["Picked_Flag"].max()
 
-    word_pick["Picked"] = word_pick["status"].astype(str).str.strip().eq("Picked")
-    word_pick = word_pick.groupby(key_used, as_index=False)["Picked"].max() if key_used else pd.DataFrame(columns=["WO","Picked"])
+    df_Order_Picked = (
+        final_sales_order
+        .merge(word_pick, left_on="QB Num", right_on="WO_Number", how="left")
+        .drop(columns=["WO_Number"])
+    )
+    df_Order_Picked["Picked_Flag"] = df_Order_Picked["Picked_Flag"].astype("boolean").fillna(False)
 
-    if key_used == "QB Num":
-        df_Order_Picked = final_sales_order.merge(word_pick, on="QB Num", how="left")
-    elif key_used == "WO_Number":
-        df_Order_Picked = final_sales_order.merge(word_pick, left_on="QB Num", right_on="WO_Number", how="left").drop(columns=["WO_Number"])
+    # partial flag from Qty-Backordered if present; else derive from Qty vs Backordered (if both exist)
+    if "Qty-Backordered" in df_Order_Picked.columns:
+        qbo = pd.to_numeric(df_Order_Picked["Qty-Backordered"], errors="coerce").fillna(0)
+        df_Order_Picked["partial"] = qbo > 0
     else:
-        df_Order_Picked = final_sales_order.copy()
-        df_Order_Picked["Picked"] = False
+        qty_num = pd.to_numeric(df_Order_Picked.get("Qty", 0), errors="coerce").fillna(0)
+        back_num = pd.to_numeric(df_Order_Picked.get("Backordered", 0), errors="coerce")
+        df_Order_Picked["partial"] = (qty_num != back_num)
 
-    df_Order_Picked["Picked"] = df_Order_Picked["Picked"].map({True: "Picked", False: "No"}).fillna("No")
+    # Step A: baseline
+    df_Order_Picked["Picked"] = np.where(df_Order_Picked["Picked_Flag"], "Picked", "No")
+    # Step B: upgrade picked rows to Partial when partial=True
+    mask_partial = df_Order_Picked["Picked_Flag"] & df_Order_Picked["partial"]
+    df_Order_Picked.loc[mask_partial, "Picked"] = "Partial"
 
-
-    # Picked qty per part
+    # -----------------------------
+    # 3) Picked qty per part (count only baseline-picked rows, not partial)
+    #    If you want partial to still reserve qty, change == "Picked" to .isin(["Picked","Partial"])
+    # -----------------------------
     picked_parts = (
         df_Order_Picked.loc[df_Order_Picked["Picked"].eq("Picked")]
         .groupby("Item", as_index=False)["Qty"].sum()
         .rename(columns={"Item": "Part_Number", "Qty": "Picked_Qty"})
     )
 
-    # Inventory merge
+    # -----------------------------
+    # 4) Merge Inventory
+    # -----------------------------
     inv_plus = inventory_df.merge(picked_parts, on="Part_Number", how="left")
-    for c in ["On Hand", "On Sales Order", "On PO", "Picked_Qty"]:
+    for c in ["On Hand", "On Sales Order", "On PO", "Picked_Qty", "Reorder Pt (Min)", "Sales/Week", "Available"]:
         if c in inv_plus.columns:
             inv_plus[c] = pd.to_numeric(inv_plus[c], errors="coerce").fillna(0)
 
     structured_df = df_Order_Picked.merge(
         inv_plus, how="left", left_on="Item", right_on="Part_Number"
     )
+
+    # demand qty numeric; drop rows with NaN demand
     structured_df["Qty"] = pd.to_numeric(structured_df["Qty"], errors="coerce")
     structured_df = structured_df.dropna(subset=["Qty"])
 
-    # Lead Time + assigned totals per Item
-    structured_df["Lead Time"] = pd.to_datetime(structured_df["Lead Time"], errors="coerce").dt.floor("D")
-    # Convert to datetime first (already in your code)
+    # -----------------------------
+    # 5) Lead Time normalization + dummy-date handling
+    # -----------------------------
     structured_df["Lead Time"] = pd.to_datetime(structured_df["Lead Time"], errors="coerce").dt.floor("D")
 
-    # --- Fix dummy dates: move them to 2099 equivalents ---
-    mask_july4  = (structured_df["Lead Time"].dt.month.eq(7))  & (structured_df["Lead Time"].dt.day.eq(4))
-    mask_dec31  = (structured_df["Lead Time"].dt.month.eq(12)) & (structured_df["Lead Time"].dt.day.eq(31))
-
+    mask_july4 = (structured_df["Lead Time"].dt.month.eq(7)) & (structured_df["Lead Time"].dt.day.eq(4))
+    mask_dec31 = (structured_df["Lead Time"].dt.month.eq(12)) & (structured_df["Lead Time"].dt.day.eq(31))
     structured_df.loc[mask_july4, "Lead Time"] = pd.Timestamp("2099-07-04")
     structured_df.loc[mask_dec31, "Lead Time"] = pd.Timestamp("2099-12-31")
-    assigned_mask = ~(
-        (structured_df["Lead Time"].dt.month.eq(7)  & structured_df["Lead Time"].dt.day.eq(4)) |
-        (structured_df["Lead Time"].dt.month.eq(12) & structured_df["Lead Time"].dt.day.eq(31))
+
+    # Assigned totals per Item (exclude dummy dates)
+    not_dummy = ~(
+        (structured_df["Lead Time"] == pd.Timestamp("2099-07-04")) |
+        (structured_df["Lead Time"] == pd.Timestamp("2099-12-31"))
     )
-    assigned_total = structured_df["Qty"].where(assigned_mask, 0).groupby(structured_df["Item"]).transform("sum")
-    structured_df["Assigned Q'ty"] = assigned_total
-    structured_df["On Hand - WIP"] = structured_df["On Hand"] - structured_df.get("Picked_Qty", 0)
+    structured_df["Assigned Q'ty"] = structured_df["Qty"].where(not_dummy, 0).groupby(structured_df["Item"]).transform("sum")
 
+    # Keep stock sane; reserve only baseline-picked qty; never go negative
+    structured_df["Picked_Qty"] = pd.to_numeric(structured_df.get("Picked_Qty", 0), errors="coerce").fillna(0)
+    structured_df["On Hand"] = pd.to_numeric(structured_df.get("On Hand", 0), errors="coerce").fillna(0)
+    structured_df["On Hand - WIP"] = (structured_df["On Hand"] - structured_df["Picked_Qty"]).clip(lower=0)
 
-    # Filter pods that have been locked to SO  
-    # ['Name'] represents the Customer, ['Source Name'] represents the Vendor
-    filtered = df_pod[~df_pod['Name'].isin([
-    'Neousys Technology Incorp.',
-    'Amazon',
-    'Newegg Business, Inc.',
-    'Newegg.com',
-    'Kontron America, Inc.',
-    'Provantage LLC',
-    'SMART Modular Technologies, Inc.',
-    'Spectrum Sourcing',
-    'Arrow Electronics, Inc.',
-    'ASI Computer Technologies, Inc.',
-    'B&H',
-    'PhyTools',
-    'Mouser Electronics',
-    'Genoedge Corporation DBA SabrePC.COM',
-    'CoastIPC, Inc.',
-    'Industrial PC, Inc.',
-
-])]
-    result = (
-        filtered.groupby('Item', as_index=False)['Qty(+)']
-        .sum()
-    )
+    # -----------------------------
+    # 6) Vendor PO filtering -> Pre-installed PO
+    # -----------------------------
+    filtered = df_pod[~df_pod["Name"].isin([
+        "Neousys Technology Incorp.",
+        "Amazon", "Newegg Business, Inc.", "Newegg.com",
+        "Kontron America, Inc.", "Provantage LLC",
+        "SMART Modular Technologies, Inc.", "Spectrum Sourcing",
+        "Arrow Electronics, Inc.", "ASI Computer Technologies, Inc.",
+        "B&H", "PhyTools", "Mouser Electronics",
+        "Genoedge Corporation DBA SabrePC.COM",
+        "CoastIPC, Inc.", "Industrial PC, Inc."
+    ])]
+    result = filtered.groupby("Item", as_index=False)["Qty(+)"].sum()
     lookup = (
-        result[['Item', 'Qty(+)']]
-        .drop_duplicates(subset=['Item'])         # ensures uniqueness
-        .set_index('Item')['Qty(+)'] # Series: index = part_number
+        result[["Item", "Qty(+)"]]
+        .drop_duplicates(subset=["Item"])
+        .set_index("Item")["Qty(+)"]
     )
-    structured_df['Pre-installed PO'] = structured_df['Item'].map(lookup).fillna(0)
-    structured_df["Available + Pre-installed PO"] = structured_df["Available"] + structured_df['Pre-installed PO']
+    structured_df["Pre-installed PO"] = structured_df["Item"].map(lookup).fillna(0)
 
-    ## Recommend Restocking QTY
-    # Ensure numeric types and fill NaNs
-    structured_df['Reorder Pt (Min)'] = pd.to_numeric(structured_df['Reorder Pt (Min)'], errors='coerce').fillna(0)
-    structured_df['Available'] = pd.to_numeric(structured_df['Available'], errors='coerce').fillna(0)
-    structured_df['On PO'] = pd.to_numeric(structured_df['On PO'], errors='coerce').fillna(0)
+    # -----------------------------
+    # 7) Availability + Restock + Component Status
+    # -----------------------------
+    structured_df["Available"] = pd.to_numeric(structured_df.get("Available", 0), errors="coerce").fillna(0)
+    structured_df["On PO"] = pd.to_numeric(structured_df.get("On PO", 0), errors="coerce").fillna(0)
+    structured_df["Reorder Pt (Min)"] = pd.to_numeric(structured_df.get("Reorder Pt (Min)", 0), errors="coerce").fillna(0)
+    structured_df["Sales/Week"] = pd.to_numeric(structured_df.get("Sales/Week", 0), errors="coerce").fillna(0)
 
-    structured_df['Available + On PO'] = structured_df['Available'] + structured_df['On PO']
+    structured_df["Available + Pre-installed PO"] = structured_df["Available"] + structured_df["Pre-installed PO"]
+    structured_df["Available + On PO"] = structured_df["Available"] + structured_df["On PO"]
 
-    # Calculate Restock Qty
-    structured_df['Recommended Restock Qty'] = np.ceil(
-    np.maximum(0, (4 * structured_df['Sales/Week']) - structured_df['Available'] - structured_df['On PO'])
-).astype(int)
+    structured_df["Recommended Restock Qty"] = np.ceil(
+        np.maximum(0, (4 * structured_df["Sales/Week"]) - structured_df["Available"] - structured_df["On PO"])
+    ).astype(int)
 
-    ## Define Component Status
-    structured_df["Component_Status"] = np.where(
-    (structured_df["Available"] >= 0) & (structured_df["On Hand"] > 0),
-    "Available",
-    np.where(
-        (structured_df["Available"] + structured_df["On PO"] > 0),
-        "Waiting",
-        "Shortage"
+    structured_df["Component_Status"] = np.select(
+        [
+            (structured_df["Available"] >= 0) & (structured_df["On Hand"] > 0),
+            (structured_df["Available"] + structured_df["On PO"] > 0)
+        ],
+        ["Available", "Waiting"],
+        default="Shortage"
     )
-)
-   
+
+    # -----------------------------
+    # 8) Final column polish
+    # -----------------------------
     structured_df["Qty(+)"] = "0"
-    structured_df['Pre/Bare'] = "Out"
+    structured_df["Pre/Bare"] = "Out"
 
-    structured_df.rename(columns={"SO Entry Date":"Order Date", "Customer": "Name", "Lead Time": "Ship Date", "Customer PO": "P. O. #", "Qty": "Qty(-)", "SO Status": "SO_Status" },inplace=True)
+    structured_df.rename(
+        columns={
+            "SO Entry Date": "Order Date",
+            "Customer": "Name",
+            "Lead Time": "Ship Date",
+            "Customer PO": "P. O. #",
+            "Qty": "Qty(-)",
+            "SO Status": "SO_Status"
+        },
+        inplace=True
+    )
+
     for col in ["Order Date", "Ship Date"]:
-        structured_df[col] = pd.to_datetime(structured_df[col], errors="coerce").dt.date
+        if col in structured_df.columns:
+            structured_df[col] = pd.to_datetime(structured_df[col], errors="coerce").dt.date
 
     return structured_df, final_sales_order
+
 
 
 #  Create Dataframe for LT assignment purpose

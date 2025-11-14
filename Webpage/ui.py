@@ -80,6 +80,11 @@ INDEX_TPL = """
     .detail-panel h6{ text-transform:uppercase; font-size:.85rem; letter-spacing:.08em; font-weight:600; }
     .detail-panel .subcard{ border:1px solid #e2e8f0; border-radius:12px; padding:1rem; background:#f8fafc; height:100%; }
     .detail-panel .subcard.active{ border-color:#0d6efd; box-shadow:0 0 0 3px rgba(13,110,253,.15); }
+    /* Inventory Count CTA card */
+    .inv-cta{ border-radius:16px; background:#0d6efd; color:#fff; padding:1.25rem 1.5rem; display:flex; align-items:center; justify-content:space-between; gap:1rem; }
+    .inv-cta .title{ font-weight:700; letter-spacing:.02em; }
+    .inv-cta .sub{ opacity:.9 }
+    .inv-cta .btn{ background:#fff; color:#0d6efd; font-weight:700; border:none }
     .detail-panel{ border-radius:14px; box-shadow:0 10px 22px rgba(0,0,0,.06); background:#fff; padding:1.5rem; display:none; }
     .detail-panel h6{ text-transform:uppercase; font-size:.85rem; letter-spacing:.08em; font-weight:600; }
     .detail-panel .subcard{ border:1px solid #e2e8f0; border-radius:12px; padding:1rem; background:#f8fafc; height:100%; }
@@ -109,12 +114,17 @@ INDEX_TPL = """
     </div>
     <div class="col-12 d-flex justify-content-between align-items-center">
       <div class="text-muted small">Tip: Enter an SO / QB number or an Item to view its details.</div>
-      <div class="d-flex gap-2">
-        <a class="btn btn-sm btn-outline-primary" href="/inventory_count">Inventory Count</a>
-        <a class="btn btn-sm btn-outline-secondary" href="/">Back to Home</a>
-      </div>
+      <div class="d-flex gap-2"></div>
     </div>
   </form>
+
+  <div class="inv-cta mt-2">
+    <div>
+      <div class="title">Inventory Count</div>
+      <div class="sub">A separate module for quick item stock snapshots</div>
+    </div>
+    <a class="btn btn-lg" href="/inventory_count">Open</a>
+  </div>
 
   {% if order_summary %}
   <div class="summary-card bg-white mb-4 p-4">
@@ -404,7 +414,10 @@ INVENTORY_TPL = """
     </div>
     <div class="col-12 col-md-4">
       <label class="form-label" for="inv-item">By Item</label>
-      <input id="inv-item" class="form-control form-control-lg" style="height:60px;font-size:1.05rem" name="item" placeholder="Item (e.g., M.280-SSD-1TB-SATA-TLC5WT-TD)" value="{{ item_val or '' }}">
+      <div style="position:relative;">
+        <input id="inv-item" autocomplete="off" class="form-control form-control-lg" style="height:60px;font-size:1.05rem" name="item" placeholder="Type to search (fuzzy)" value="{{ item_val or '' }}">
+        <div id="inv-suggest" class="list-group" style="position:absolute; top:62px; left:0; right:0; z-index:1000; display:none; max-height:240px; overflow:auto;"></div>
+      </div>
     </div>
     <div class="col-6 col-md-auto">
       <button class="btn btn-primary px-4 w-100" style="height:52px;font-size:1rem;font-weight:600">Search</button>
@@ -468,6 +481,42 @@ INVENTORY_TPL = """
     if (!panel) return;
 
     var cache = {};
+
+    // --- fuzzy suggest for item input ---
+    var input = document.getElementById('inv-item');
+    var list = document.getElementById('inv-suggest');
+    var suggestTimer;
+    function hideList(){ list.style.display = 'none'; list.innerHTML=''; }
+    function showList(items){
+      if (!items || !items.length) { hideList(); return; }
+      list.innerHTML = items.map(function (it){
+        return '<button type="button" class="list-group-item list-group-item-action">' +
+               it.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</button>';
+      }).join('');
+      list.style.display = 'block';
+    }
+    if (input && list){
+      input.addEventListener('input', function(){
+        var q = input.value.trim();
+        if (suggestTimer) clearTimeout(suggestTimer);
+        if (!q){ hideList(); return; }
+        suggestTimer = setTimeout(function(){
+          fetch('/api/item_suggest?q=' + encodeURIComponent(q))
+            .then(function(r){ return r.json(); })
+            .then(function(j){ if (j && j.ok) showList(j.items); else hideList(); })
+            .catch(function(){ hideList(); });
+        }, 180);
+      });
+      list.addEventListener('click', function(e){
+        var t = e.target.closest('.list-group-item');
+        if (!t) return;
+        input.value = t.textContent.trim();
+        hideList();
+      });
+      document.addEventListener('click', function(e){
+        if (!e.target.closest || (!e.target.closest('#inv-suggest') && !e.target.closest('#inv-item'))) hideList();
+      });
+    }
 
     function escapeHtml(value) {
       if (value === null || value === undefined) return '';
