@@ -237,14 +237,23 @@ def build_structured_df(
     )
     df_Order_Picked["Picked_Flag"] = df_Order_Picked["Picked_Flag"].astype("boolean").fillna(False)
 
-    # partial flag from Qty-Backordered if present; else derive from Qty vs Backordered (if both exist)
-    if "Qty-Backordered" in df_Order_Picked.columns:
-        qbo = pd.to_numeric(df_Order_Picked["Qty-Backordered"], errors="coerce").fillna(0)
-        df_Order_Picked["partial"] = qbo > 0
-    else:
-        qty_num = pd.to_numeric(df_Order_Picked.get("Qty", 0), errors="coerce").fillna(0)
-        back_num = pd.to_numeric(df_Order_Picked.get("Backordered", 0), errors="coerce")
-        df_Order_Picked["partial"] = (qty_num != back_num)
+    # Build unique (QB Num, Item) → partial mapping (True if ANY line is partial)
+    partial_map = (
+        df_sales_order
+        .groupby(["QB Num", "Item"], as_index=False)["partial"]
+        .any()                                    # collapse duplicates
+        .rename(columns={"partial": "partial_flag"})
+    )
+
+    # Merge into df_Order_Picked on the two keys
+    df_Order_Picked = df_Order_Picked.merge(
+        partial_map, on=["QB Num", "Item"], how="left"
+    )
+
+    # Final boolean column
+    df_Order_Picked["partial"] = df_Order_Picked["partial_flag"].fillna(False).astype(bool)
+    df_Order_Picked.drop(columns=["partial_flag"], inplace=True)
+
 
     # Step A: baseline
     df_Order_Picked["Picked"] = np.where(df_Order_Picked["Picked_Flag"], "Picked", "No")

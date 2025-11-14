@@ -456,8 +456,7 @@ INVENTORY_TPL = """
                 <tr>
                   {% for c in so_columns %}
                     {% if c == 'Item' %}
-                      {% set iv = r[c] %}
-                      <td class="nowrap"><a href="#" class="inv-detail-link" data-item="{{ iv | e }}">{{ iv }}</a></td>
+                      <td class="nowrap">{{ r[c] }}</td>
                     {% else %}
                       <td>{{ r[c] }}</td>
                     {% endif %}
@@ -471,7 +470,37 @@ INVENTORY_TPL = """
         </table>
       </div>
       <div class="text-muted small">Source: public.wo_structured</div>
-      <div id="inv-item-detail-panel" class="detail-panel" style="display:none; margin-top:1rem; border-radius:14px; box-shadow:0 10px 22px rgba(0,0,0,.06); background:#fff; padding:1.25rem;"></div>
+    </div>
+  </div>
+
+  <div class="card-lite bg-white mt-3">
+    <div class="card-header fw-bold">Open Purchase Orders</div>
+    <div class="card-body">
+      <div class="table-responsive">
+        <table class="table table-sm table-bordered table-hover align-middle">
+          <thead class="table-light text-uppercase small text-muted">
+            <tr>
+              {% for c in open_po_columns %}
+                <th>{{ c }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% if open_po_rows %}
+              {% for r in open_po_rows %}
+                <tr>
+                  {% for c in open_po_columns %}
+                    <td>{{ r[c] }}</td>
+                  {% endfor %}
+                </tr>
+              {% endfor %}
+            {% else %}
+              <tr><td colspan="{{ open_po_columns|length }}" class="text-center text-muted">No open purchase orders</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+      <div class="text-muted small">Source: public.Open_Purchase_Orders</div>
     </div>
   </div>
 

@@ -650,6 +650,8 @@ def inventory_count():
     so_rows: list[dict] | None = None
     on_hand: int | float | None = None
     on_hand_wip: int | float | None = None
+    open_po_columns: list[str] | None = None
+    open_po_rows: list[dict] | None = None
 
     filtered_df = SO_INV.copy()
     if item_input:
@@ -681,6 +683,11 @@ def inventory_count():
         for extra in ("On SO", "On PO"):
             if extra not in so_columns:
                 so_columns.append(extra)
+        # Also load Open Purchase Orders table for the item
+        try:
+            open_po_columns, open_po_rows = _open_po_table_for_item(item_input)
+        except Exception:
+            open_po_columns, open_po_rows = [], []
     elif so_num:
         so_columns, so_rows = _so_table_for_so(so_num)
     else:
@@ -695,6 +702,8 @@ def inventory_count():
         on_hand_wip=on_hand_wip,
         so_columns=so_columns,
         so_rows=so_rows,
+        open_po_columns=open_po_columns or [],
+        open_po_rows=open_po_rows or [],
     )
 
 @app.route("/api/item_suggest")
