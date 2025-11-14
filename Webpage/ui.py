@@ -507,7 +507,6 @@ INVENTORY_TPL = """
   <script>
   (function () {
     var panel = document.getElementById('inv-item-detail-panel');
-    if (!panel) return;
 
     var cache = {};
 
