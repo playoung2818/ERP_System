@@ -67,7 +67,6 @@ def transform_sales_order(df_sales_order: pd.DataFrame) -> pd.DataFrame:
 
 def transform_inventory(inventory_df: pd.DataFrame) -> pd.DataFrame:
     inv = inventory_df.copy()
-    # only rename ONCE
     inv = inv.rename(columns={"Unnamed: 0":"Part_Number"})
     inv["Part_Number"] = inv["Part_Number"].astype(str).str.strip()
     inv['Part_Number'] = inv['Part_Number'].replace(mappings)
@@ -91,8 +90,6 @@ def transform_pod(df_pod: pd.DataFrame) -> pd.DataFrame:
     pod.rename(columns={"Memo":"Item"},inplace=True)
     pod['Order Date']= pd.to_datetime(pod['Order Date'])
     pod['Deliv Date']= pd.to_datetime(pod['Deliv Date'])
-    pod['Order Date'] = pod['Order Date'].dt.strftime('%Y/%m/%d')
-    pod['Deliv Date'] = pod['Deliv Date'].dt.strftime('%Y/%m/%d')
     pod['Item'] = pod['Item'].replace(mappings)
     df_pod = pd.DataFrame(pod)
     return df_pod
@@ -124,8 +121,7 @@ def transform_shipping(df_shipping_schedule: pd.DataFrame) -> pd.DataFrame:
     Ship["Item"] = Ship["Item"].astype(str).str.strip()
     Ship["Description"] = Ship["Description"].astype(str)
 
-    # coerce Ship Date to yyyy/mm/dd string if you want it normalized (optional)
-    Ship["Ship Date"] = pd.to_datetime(Ship["Ship Date"], errors="coerce").dt.date
+    Ship["Ship Date"] = pd.to_datetime(Ship["Ship Date"], errors="coerce")
 
     # Qty(+) numeric
     Ship["Qty(+)"] = pd.to_numeric(Ship["Qty(+)"], errors="coerce").fillna(0).astype(int)
@@ -374,7 +370,7 @@ def build_structured_df(
 
     for col in ["Order Date", "Ship Date"]:
         if col in structured_df.columns:
-            structured_df[col] = pd.to_datetime(structured_df[col], errors="coerce").dt.date
+            structured_df[col] = pd.to_datetime(structured_df[col], errors="coerce").dt.strftime("%m/%d/%Y")
 
     return structured_df, final_sales_order
 
@@ -409,6 +405,8 @@ def prepare_erp_view(structured: pd.DataFrame) -> pd.DataFrame:
     )
 
     ERP_df["AssignedFlag"] = ~mask  # True = valid Ship Date, False = placeholder
+
+    ERP_df["Ship Date"] = ERP_df["Ship Date"].dt.strftime("%m/%d/%Y")
 
     return ERP_df
 

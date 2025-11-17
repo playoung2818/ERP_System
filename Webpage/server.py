@@ -1,11 +1,12 @@
 # server.py
 import os
+import json
 from datetime import datetime
 from flask import Flask, request, render_template_string, jsonify, abort, redirect, url_for, send_file, Response
 import pandas as pd
 from sqlalchemy import create_engine, text
 
-from ui import ERR_TPL, INDEX_TPL, SUBPAGE_TPL, ITEM_TPL, INVENTORY_TPL
+from ui import ERR_TPL, INDEX_TPL, SUBPAGE_TPL, ITEM_TPL, INVENTORY_TPL, PRODUCTION_TPL
 
 app = Flask(__name__)
 
@@ -25,6 +26,7 @@ engine = create_engine(DATABASE_DSN, pool_pre_ping=True)
 SO_INV: pd.DataFrame | None = None
 NAV: pd.DataFrame | None = None
 OPEN_PO: pd.DataFrame | None = None
+FINAL_SO: pd.DataFrame | None = None
 _LAST_LOAD_ERR: str | None = None
 _LAST_LOADED_AT: datetime | None = None
 
@@ -53,6 +55,26 @@ TABLE_HEADER_LABELS = {
     "Ship Date": "Ship Date",
 }
 
+# Basic item name normalization (keep in sync with ERP core)
+MAPPINGS = {
+    "GC-J-A64GB-O-Industrial-Nvidia": "GC-Jetson-AGX64GB-Orin-Industrial-Nvidia-JetPack-6.0",
+    "GC-Jetson-AGX64GB-Orin-Nvidia": "GC-Jetson-AGX64GB-Orin-Nvidia-JetPack-6.0",
+    "AccsyBx-Cardholder-10108GC-5080": "AccsyBx-Cardholder-10108GC-5080_70_70Ti",
+    "AccsyBx-Cardholder-10208GC-5080": "AccsyBx-Cardholder-10208GC-5080_70_70Ti",
+    "Cblkit-FP-NRU-230V-AWP_NRU-240S": "Cblkit-FP-NRU-230V-AWP_NRU-240S-AWP",
+    "E-mPCIe-GPS-M800_Mod_40CM": "Extnd-mPCIeHS_GPS-M800_Mod_Cbl-40CM_kits",
+    "Cbl-M12A5F-OT2-B-Red-Fuse-100CM": "Cbl-M12A5F-OT2-Black-Red-Fuse-100CM",
+    "AccsyBx-Cardholder-9160GC-2000E": "AccsyBx-Cardholder-9160GC-2000EAda",
+    "M.280-SSD-4TB-PCIe4-TLCWT5NH-IK": "M.280-SSD-4TB-PCIe4-TLC5WT-NH-IK",
+    "M.242-SSD-128GB-PCIe34-TLC5WT-T": "M.242-SSD-128GB-PCIe34-TLC5WT-TD",
+    "M.242-SSD-256GB-PCIe34-TLC5WT-T": "M.242-SSD-256GB-PCIe34-TLC5WT-TD",
+    "M.280-SSD-256GB-PCIe44-TLC5WT-T": "M.280-SSD-256GB-PCIe44-TLC5WT-TD",
+    "M.280-SSD-512GB-PCIe44-TLC5WT-T": "M.280-SSD-512GB-PCIe44-TLC5WT-TD",
+    "E-mPCIe-BTWifi-WT-6218_Mod_40CM": "Extnd-mPCIeHS-BTWifi-WT-6218_Mod_Cbl-40CM_kits",
+    "GC-Jetson-NX16G-Orin-Nvidia": "GC-Jetson-NX16G-Orin-Nvidia-JetPack6.0",
+    "FPnl-3Ant-NRU-170-PPC series": "FPnl-3Ant-NRU-170-PPCseries",
+}
+
 # -------- helpers --------
 def _safe_date_col(df: pd.DataFrame, col: str):
     if col in df.columns:
@@ -65,6 +87,119 @@ def _to_date_str(s: pd.Series, fmt="%Y-%m-%d") -> pd.Series:
 def _read_table(schema: str, table: str) -> pd.DataFrame:
     sql = f'SELECT * FROM "{schema}"."{table}"'
     return pd.read_sql_query(text(sql), con=engine)
+
+
+def _reorder_df_out_by_output(output_df: pd.DataFrame, df_out: pd.DataFrame) -> pd.DataFrame:
+    """
+    Reorder df_out to match the line ordering found in output_df.
+    Both frames are expected to use columns: ['QB Num', 'Item'].
+    """
+    if output_df is None or output_df.empty:
+        return df_out.sort_values(["QB Num", "Item"]).reset_index(drop=True)
+
+    ref = output_df.copy()
+    ref["__pos_out"] = ref.groupby("QB Num").cumcount()
+    ref["__occ"] = ref.groupby(["QB Num", "Item"]).cumcount()
+    ref_key = ref[["QB Num", "Item", "__occ", "__pos_out"]]
+
+    tgt = df_out.copy()
+    tgt["__occ"] = tgt.groupby(["QB Num", "Item"]).cumcount()
+
+    merged = tgt.merge(ref_key, on=["QB Num", "Item", "__occ"], how="left")
+    merged["__fallback"] = merged.groupby("QB Num").cumcount()
+    merged["__pos_out"] = merged["__pos_out"].fillna(float("inf"))
+
+    ordered = (
+        merged.sort_values(["QB Num", "__pos_out", "__fallback"])
+        .drop(columns=["__occ", "__pos_out", "__fallback"])
+        .reset_index(drop=True)
+    )
+    return ordered
+
+
+def _build_pdf_orders_df() -> pd.DataFrame:
+    """
+    Build ['WO','Product Number'] from public.pdf_file_log.extracted_data JSON.
+    Mirrors io_ops.fetch_pdf_orders_df_from_supabase but kept local to avoid extra deps.
+    """
+    try:
+        rows = pd.read_sql('SELECT order_id, extracted_data FROM public.pdf_file_log', engine)
+    except Exception:
+        return pd.DataFrame(columns=["WO", "Product Number"])
+
+    def rows_from_json(extracted_data, order_id=""):
+        if isinstance(extracted_data, str):
+            try:
+                extracted_data = json.loads(extracted_data)
+            except Exception:
+                extracted_data = {}
+        data = extracted_data or {}
+        wo = data.get("wo", order_id)
+        items = data.get("items") or []
+        if not items:
+            return [{"WO": wo, "Product Number": ""}]
+        out = []
+        for it in items:
+            pn = (
+                it.get("product_number")
+                or it.get("part_number")
+                or it.get("product")
+                or it.get("part")
+                or ""
+            )
+            out.append({"WO": wo, "Product Number": pn})
+        return out
+
+    all_rows = []
+    for _, r in rows.iterrows():
+        all_rows.extend(rows_from_json(r.get("extracted_data"), r.get("order_id")))
+    return pd.DataFrame(all_rows, columns=["WO", "Product Number"])
+
+
+def _build_final_sales_order_from_db() -> pd.DataFrame:
+    """
+    Rebuild final_sales_order from DB tables so it can be used
+    for the Production Planning calendar.
+    """
+    try:
+        df_sales_order = _read_table("public", "open_sales_orders")
+    except Exception:
+        return pd.DataFrame()
+
+    pdf_orders_df = _build_pdf_orders_df()
+
+    needed_cols = {
+        "Order Date": "SO Entry Date",
+        "Name": "Customer",
+        "P. O. #": "Customer PO",
+        "QB Num": "QB Num",
+        "Item": "Item",
+        "Qty(-)": "Qty",
+        "Ship Date": "Lead Time",
+    }
+    for src in list(needed_cols.keys()):
+        if src not in df_sales_order.columns:
+            df_sales_order[src] = "" if src not in ("Qty(-)",) else 0
+
+    df_out = (
+        df_sales_order.rename(columns=needed_cols)[list(needed_cols.values())].copy()
+    )
+
+    df_out["WO"] = ""
+    for alt in ["WO", "WO_Number", "NTA Order ID", "SO Number"]:
+        if alt in df_sales_order.columns:
+            df_out["WO"] = df_sales_order[alt].astype(str)
+            break
+
+    df_out = df_out.sort_values(["QB Num", "Item"]).reset_index(drop=True)
+
+    pdf_ref = pdf_orders_df.rename(columns={"WO": "QB Num", "Product Number": "Item"})
+    final_sales_order = _reorder_df_out_by_output(pdf_ref, df_out)
+
+    final_sales_order["Item"] = final_sales_order["Item"].replace(MAPPINGS)
+    final_sales_order = final_sales_order.loc[:, ~final_sales_order.columns.duplicated()]
+
+    return final_sales_order
 
 # ---------- PDF DB helpers (no Flask-SQLAlchemy) ----------
 def _pdf_db_search_by_filename(search_query: str, limit: int = 10) -> list[dict]:
@@ -133,9 +268,9 @@ def _load_pdf_map(force: bool = False):
         PDF_MAP = {}
 
 def _load_from_db(force: bool = False):
-    global SO_INV, NAV, OPEN_PO, _LAST_LOAD_ERR, _LAST_LOADED_AT
+    global SO_INV, NAV, OPEN_PO, FINAL_SO, _LAST_LOAD_ERR, _LAST_LOADED_AT
     try:
-        if force or SO_INV is None or NAV is None or OPEN_PO is None:
+        if force or SO_INV is None or NAV is None or OPEN_PO is None or FINAL_SO is None:
             so = _read_table("public", "wo_structured")
             nav = _read_table("public", "NT Shipping Schedule")
             open_po = _read_table("public", "Open_Purchase_Orders")
@@ -148,16 +283,18 @@ def _load_from_db(force: bool = False):
                     _safe_date_col(open_po, col)
 
             SO_INV, NAV, OPEN_PO = so, nav, open_po
+            FINAL_SO = _build_final_sales_order_from_db()
             _LAST_LOAD_ERR = None
             _LAST_LOADED_AT = datetime.now()
     except Exception as e:
         SO_INV = None
         NAV = None
         OPEN_PO = None
+        FINAL_SO = None
         _LAST_LOAD_ERR = f"DB load error: {e}"
 
 def _ensure_loaded():
-    if SO_INV is None or NAV is None or OPEN_PO is None:
+    if SO_INV is None or NAV is None or OPEN_PO is None or FINAL_SO is None:
         _load_from_db(force=True)
     # Load PDF map on demand as well
     _load_pdf_map()
@@ -199,6 +336,43 @@ def _aggregate_metric(series: pd.Series) -> int | float | None:
         return _coerce_total(first)
     total = numeric.sum()
     return _coerce_total(total)
+
+
+def _find_pdf_url_for_so(so_num: str, po_num: str | None = None) -> str | None:
+    """
+    Best-effort PDF link lookup for a given SO/QB number.
+    Mirrors the logic used on the main index page.
+    """
+    so_num = (so_num or "").strip()
+    if not so_num:
+        return None
+
+    search_keys = [so_num]
+    so_upper = so_num.upper()
+    if so_upper.startswith("SO-"):
+        search_keys.append(so_num[3:])
+    if po_num:
+        search_keys.append(str(po_num))
+
+    pdf_record = None
+    for key in search_keys:
+        recs = _pdf_db_search_by_filename(key, limit=1)
+        if recs:
+            pdf_record = recs[0]
+            break
+
+    if pdf_record:
+        return f"/pdfid/{pdf_record['id']}"
+
+    keys_to_try = [so_num, so_upper.replace("SO-", ""), so_upper.replace("SO", "").strip("- ")]
+    pdf_info = None
+    for k in keys_to_try:
+        pdf_info = PDF_MAP.get(k.upper())
+        if pdf_info:
+            break
+    if pdf_info:
+        return f"/pdf/{(pdf_info['file_name'][:-4])}"
+    return None
 
 def _so_table_for_item(item: str) -> tuple[list[str], list[dict], dict[str, int | float | None]]:
     need_cols = ["Name", "QB Num", "Item", "Qty(-)", "On Hand - WIP", "Ship Date", "Picked"]
@@ -704,6 +878,67 @@ def inventory_count():
         so_rows=so_rows,
         open_po_columns=open_po_columns or [],
         open_po_rows=open_po_rows or [],
+    )
+
+
+@app.route("/production_planning")
+def production_planning():
+    _ensure_loaded()
+    if _LAST_LOAD_ERR:
+        return render_template_string(ERR_TPL, error=_LAST_LOAD_ERR), 503
+
+    if request.args.get("reload") == "1":
+        _load_from_db(force=True)
+
+    if FINAL_SO is None or FINAL_SO.empty:
+        return render_template_string(ERR_TPL, error="No final_sales_order data available."), 503
+
+    df = FINAL_SO.copy()
+    if "Lead Time" not in df.columns:
+        return render_template_string(ERR_TPL, error="final_sales_order missing 'Lead Time' column."), 500
+
+    df["Lead Time"] = pd.to_datetime(df["Lead Time"], errors="coerce")
+    df = df.dropna(subset=["Lead Time"])
+    if df.empty:
+        return render_template_string(ERR_TPL, error="No valid Lead Time rows in final_sales_order."), 503
+
+    df["lead_date_str"] = df["Lead Time"].dt.strftime("%Y-%m-%d")
+
+    date_groups: list[dict] = []
+    for date_str, date_group in df.sort_values(["Lead Time", "QB Num"]).groupby(
+        "lead_date_str", sort=True
+    ):
+        orders: list[dict] = []
+        for qb_num, so_group in date_group.groupby("QB Num"):
+            first = so_group.iloc[0]
+            customer = first.get("Customer") or first.get("Name") or ""
+            qty_val = first.get("Qty")
+            try:
+                qty_float = float(qty_val)
+                qty_str = str(int(qty_float)) if qty_float.is_integer() else str(qty_float)
+            except Exception:
+                qty_str = str(qty_val) if qty_val is not None else ""
+            item_name = first.get("Item") or ""
+            line = f"{item_name} x {qty_str}".strip()
+            po_num = first.get("Customer PO") or first.get("P. O. #") or ""
+            pdf_url = _find_pdf_url_for_so(str(qb_num), po_num)
+            orders.append(
+                {
+                    "qb_num": str(qb_num),
+                    "customer": customer,
+                    "line": line,
+                    "pdf_url": pdf_url,
+                }
+            )
+        orders.sort(key=lambda r: r["qb_num"])
+        date_groups.append({"date": date_str, "orders": orders})
+
+    date_groups.sort(key=lambda g: g["date"])
+
+    return render_template_string(
+        PRODUCTION_TPL,
+        loaded_at=_LAST_LOADED_AT.strftime("%Y-%m-%d %H:%M:%S") if _LAST_LOADED_AT else "",
+        date_groups=date_groups,
     )
 
 @app.route("/api/item_suggest")

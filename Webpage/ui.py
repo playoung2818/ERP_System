@@ -126,6 +126,14 @@ INDEX_TPL = """
     <a class="btn btn-lg" href="/inventory_count">Open</a>
   </div>
 
+  <div class="inv-cta mt-3" style="background:#059669;">
+    <div>
+      <div class="title">Production Planning</div>
+      <div class="sub">Calendar-style view of final sales orders by Lead Time</div>
+    </div>
+    <a class="btn btn-lg" href="/production_planning">Open</a>
+  </div>
+
   {% if order_summary %}
   <div class="summary-card bg-white mb-4 p-4">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
@@ -859,6 +867,79 @@ ITEM_TPL = """
       </div>
     </div>
   </div>
+</body>
+</html>
+"""
+
+PRODUCTION_TPL = """
+<!doctype html>
+<html>
+<head>
+  <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+  <meta charset="utf-8">
+  <title>Production Planning</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    :root{ --ink:#0f172a; --muted:#6b7280; --bg:#f7fafc; --card:#ffffff; }
+    html,body{ background:var(--bg); color:var(--ink); }
+    body{ padding:28px; }
+    .card-lite{ border-radius:14px; box-shadow:0 10px 22px rgba(0,0,0,.06); background:var(--card); }
+    .day-card{ border-left:4px solid #0d6efd; }
+    .day-header{ font-weight:600; font-size:1rem; }
+    .order-line{ display:flex; justify-content:space-between; align-items:center; padding:.4rem .6rem; border-radius:10px; }
+    .order-line:nth-child(odd){ background:#f9fafb; }
+    .order-line:nth-child(even){ background:#eef2ff; }
+    .order-main{ font-weight:600; }
+    .order-sub{ font-size:.85rem; color:var(--muted); }
+    .order-link{ text-decoration:none; color:#0d6efd; font-size:.85rem; }
+    .order-link:hover{ text-decoration:underline; }
+  </style>
+</head>
+<body>
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <div class="h3 m-0">Production Planning</div>
+      <div class="text-muted small">Loaded {{ loaded_at }}</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-sm btn-outline-secondary" href="/">Home</a>
+      <a class="btn btn-sm btn-outline-primary" href="/production_planning?reload=1">Reload</a>
+    </div>
+  </div>
+
+  {% if not date_groups %}
+    <div class="alert alert-info">No production data available.</div>
+  {% else %}
+    <div class="row g-3">
+      {% for group in date_groups %}
+        <div class="col-12 col-md-6 col-xl-4">
+          <div class="card-lite day-card p-3 h-100">
+            <div class="day-header mb-2">{{ group.date }}</div>
+            <div class="small text-muted mb-2">{{ group.orders|length }} order(s)</div>
+            {% if group.orders %}
+              <div class="d-flex flex-column gap-1">
+                {% for o in group.orders %}
+                  <div class="order-line">
+                    <div class="me-2">
+                      <div class="order-main">{{ o.qb_num }}</div>
+                      <div class="order-sub">
+                        {{ o.customer or '-' }}{% if o.line %} • {{ o.line }}{% endif %}
+                      </div>
+                    </div>
+                    {% if o.pdf_url %}
+                      <a class="order-link" href="{{ o.pdf_url }}" target="_blank">PDF</a>
+                    {% endif %}
+                  </div>
+                {% endfor %}
+              </div>
+            {% else %}
+              <div class="text-muted small">No orders on this date.</div>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
 </body>
 </html>
 """
