@@ -188,14 +188,19 @@ def build_ledger_from_events(SO: pd.DataFrame, EVENTS: pd.DataFrame) -> tuple[pd
                          .merge(first_neg, on="Item", how="left"))
     item_summary["OK"] = item_summary["Min_Projected_NAV"].fillna(0) >= 0
 
-    violations = ledger.loc[
-        (ledger["Projected_NAV"] < 0)
+    cutoff = pd.Timestamp("2026-07-04")
+
+    mask = (
+        (ledger["Projected_NAV"] < 0)               # real shortage
         & ledger["Date"].notna()
-        & ~ledger["Date"].isin([
-            pd.Timestamp("2099-12-31"),
-            pd.Timestamp("2099-07-04"),
-        ])
-    ].copy()
+        & (ledger["Date"] != pd.Timestamp("2099-12-31"))   # ignore fake future rows
+        & (ledger["Kind"].eq("OUT"))                # only consumption
+        & (ledger["Source"].eq("SO"))               # only customer SOs
+        & ~ledger["Item"].fillna("").str.startswith("Total ")  # drop roll-up lines
+        & (ledger["Date"] < cutoff)                 # horizon filter
+    )
+
+    violations = ledger.loc[mask].copy()
 
 
     ledger.sort_values(["Item","Date","Kind"], inplace=True, kind="mergesort")
