@@ -23,31 +23,6 @@ from ledger import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
-def fetch_inventory_status_snapshot(dsn: str, schema: str, table: str) -> pd.DataFrame:
-    """
-    Pull current inventory_status from DB for reconciliation.
-    Returns columns: Part_Number, Item, On Hand.
-    """
-    try:
-        eng = create_engine(dsn, pool_pre_ping=True)
-        with eng.begin() as cx:
-            q = f'''
-                SELECT
-                  "Part_Number",
-                  "On Hand"
-                FROM {schema}."{table}"
-            '''
-            df = pd.read_sql(q, cx)
-
-        # ensure column order / presence
-        return df[["Part_Number", "On Hand"]]
-
-    except Exception as e:
-        logging.warning(f"Snapshot fetch failed ({schema}.{table}): {e}")
-        # Return empty but with the columns build_reconcile_events expects
-        return pd.DataFrame(columns=["Part_Number", "On Hand"])
-
-
 
 def main():
     # -------- Extract --------
@@ -72,27 +47,14 @@ def main():
     # -------- NAV preinstall expansion (for IN events) --------
     nav_exp = expand_nav_preinstalled(ship)
 
-    # -------- Build events: IN/OUT + ADJ (reconcile) --------
+    # -------- Build events: IN/OUT only (no reconcile) --------
     events_inout = build_events(structured, nav_exp)
-
-    inv_db_snapshot = fetch_inventory_status_snapshot(DATABASE_DSN, DB_SCHEMA, TBL_INVENTORY)
-    recon = build_reconcile_events(
-        inv_db=inv_db_snapshot,
-        inv_wh=inv,
-        as_of=pd.Timestamp.today(),
-        mappings=mappings,      # optional item-name normalization
-        min_abs_delta=0.5       # ignore tiny noise
-    )
-
-    frames = [events_inout]
-    if not recon.empty:
-        frames.append(recon)
-
-    events_all = _order_events(pd.concat([events_inout, recon], ignore_index=True, sort=False))
+    events_all = _order_events(events_inout)   # no concat, no recon
 
     # -------- Ledger from prebuilt events --------
     ledger, item_summary, violations = build_ledger_from_events(structured, events_all)
     print(violations)
+
 
     # -------- Not-assigned SO export --------
     ERP_df = prepare_erp_view(structured)
