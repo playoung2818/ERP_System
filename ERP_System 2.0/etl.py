@@ -19,6 +19,7 @@ from ledger import (
     expand_nav_preinstalled, build_events, build_reconcile_events,
     build_ledger_from_events, _order_events
 )
+from atp import build_atp_view
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -55,6 +56,8 @@ def main():
     ledger, item_summary, violations = build_ledger_from_events(structured, events_all)
     print(violations)
 
+    # -------- ATP view (Available-to-Promise) --------
+    atp_view = build_atp_view(ledger)
 
     # -------- Not-assigned SO export --------
     ERP_df = prepare_erp_view(structured)
@@ -78,6 +81,7 @@ def main():
     write_to_db(ship,       schema=DB_SCHEMA, table=TBL_Shipping)
     write_to_db(ledger,     schema=DB_SCHEMA, table=TBL_LEDGER)
     write_to_db(item_summary, schema=DB_SCHEMA, table=TBL_ITEM_SUMMARY)
+    write_to_db(atp_view,   schema=DB_SCHEMA, table="item_atp")
 
     print(
         f"✅ Loaded: {DB_SCHEMA}.{TBL_SALES_ORDER}={len(so_full)}; "

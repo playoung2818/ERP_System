@@ -6,7 +6,15 @@ from flask import Flask, request, render_template_string, jsonify, abort, redire
 import pandas as pd
 from sqlalchemy import create_engine, text
 
-from ui import ERR_TPL, INDEX_TPL, SUBPAGE_TPL, ITEM_TPL, INVENTORY_TPL, PRODUCTION_TPL
+from ui import (
+    ERR_TPL,
+    INDEX_TPL,
+    SUBPAGE_TPL,
+    ITEM_TPL,
+    INVENTORY_TPL,
+    PRODUCTION_TPL,
+    QUOTE_TPL,
+)
 
 app = Flask(__name__)
 
@@ -27,6 +35,8 @@ SO_INV: pd.DataFrame | None = None
 NAV: pd.DataFrame | None = None
 OPEN_PO: pd.DataFrame | None = None
 FINAL_SO: pd.DataFrame | None = None
+LEDGER: pd.DataFrame | None = None
+ITEM_ATP: pd.DataFrame | None = None
 _LAST_LOAD_ERR: str | None = None
 _LAST_LOADED_AT: datetime | None = None
 
@@ -268,12 +278,22 @@ def _load_pdf_map(force: bool = False):
         PDF_MAP = {}
 
 def _load_from_db(force: bool = False):
-    global SO_INV, NAV, OPEN_PO, FINAL_SO, _LAST_LOAD_ERR, _LAST_LOADED_AT
+    global SO_INV, NAV, OPEN_PO, FINAL_SO, LEDGER, ITEM_ATP, _LAST_LOAD_ERR, _LAST_LOADED_AT
     try:
-        if force or SO_INV is None or NAV is None or OPEN_PO is None or FINAL_SO is None:
+        if (
+            force
+            or SO_INV is None
+            or NAV is None
+            or OPEN_PO is None
+            or FINAL_SO is None
+            or LEDGER is None
+            or ITEM_ATP is None
+        ):
             so = _read_table("public", "wo_structured")
             nav = _read_table("public", "NT Shipping Schedule")
             open_po = _read_table("public", "Open_Purchase_Orders")
+            ledger = _read_table("public", "ledger_analytics")
+            item_atp = _read_table("public", "item_atp")
 
             for c in ("Ship Date", "Order Date"):
                 _safe_date_col(so, c)
@@ -281,9 +301,13 @@ def _load_from_db(force: bool = False):
             for col in open_po.columns:
                 if "date" in col.lower():
                     _safe_date_col(open_po, col)
+            if "Date" in ledger.columns:
+                _safe_date_col(ledger, "Date")
 
             SO_INV, NAV, OPEN_PO = so, nav, open_po
             FINAL_SO = _build_final_sales_order_from_db()
+            LEDGER = ledger
+            ITEM_ATP = item_atp
             _LAST_LOAD_ERR = None
             _LAST_LOADED_AT = datetime.now()
     except Exception as e:
@@ -291,10 +315,19 @@ def _load_from_db(force: bool = False):
         NAV = None
         OPEN_PO = None
         FINAL_SO = None
+        LEDGER = None
+        ITEM_ATP = None
         _LAST_LOAD_ERR = f"DB load error: {e}"
 
 def _ensure_loaded():
-    if SO_INV is None or NAV is None or OPEN_PO is None or FINAL_SO is None:
+    if (
+        SO_INV is None
+        or NAV is None
+        or OPEN_PO is None
+        or FINAL_SO is None
+        or LEDGER is None
+        or ITEM_ATP is None
+    ):
         _load_from_db(force=True)
     # Load PDF map on demand as well
     _load_pdf_map()
@@ -336,6 +369,37 @@ def _aggregate_metric(series: pd.Series) -> int | float | None:
         return _coerce_total(first)
     total = numeric.sum()
     return _coerce_total(total)
+
+
+def _lookup_earliest_atp_date(item: str, qty: float = 1.0) -> datetime | None:
+    """
+    Best-effort ATP lookup based on precomputed item_atp table.
+    Returns earliest Date where FutureMin_NAV >= qty for the given item,
+    restricted to dates >= today.
+    """
+    global ITEM_ATP
+    if ITEM_ATP is None or ITEM_ATP.empty:
+        return None
+
+    df = ITEM_ATP.copy()
+    if "Item" not in df.columns or "Date" not in df.columns or "FutureMin_NAV" not in df.columns:
+        return None
+
+    today = datetime.today().date()
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    mask = (
+        df["Item"].astype(str) == str(item)
+    ) & df["Date"].notna() & (df["Date"].dt.date >= today)
+    df_item = df.loc[mask, ["Date", "FutureMin_NAV"]].dropna(subset=["FutureMin_NAV"])
+    if df_item.empty:
+        return None
+
+    df_item["FutureMin_NAV"] = pd.to_numeric(df_item["FutureMin_NAV"], errors="coerce")
+    ok = df_item["FutureMin_NAV"] >= float(qty)
+    candidates = df_item.loc[ok, "Date"]
+    if candidates.empty:
+        return None
+    return candidates.min().to_pydatetime()
 
 
 def _find_pdf_url_for_so(so_num: str, po_num: str | None = None) -> str | None:
@@ -954,8 +1018,77 @@ def api_item_suggest():
         contains = [i for i in items if ql in i.lower() and i not in starts]
         out = (starts + contains)[:20]
         return jsonify({"ok": True, "items": out})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/quotation_lookup")
+def quotation_lookup():
+    _ensure_loaded()
+    if _LAST_LOAD_ERR:
+        return render_template_string(ERR_TPL, error=_LAST_LOAD_ERR), 503
+
+    item_input = (request.values.get("item") or "").strip()
+    qty_raw = (request.values.get("qty") or "").strip()
+    try:
+        qty_val = float(qty_raw) if qty_raw else 1.0
+        if qty_val <= 0:
+            qty_val = 1.0
+    except ValueError:
+        qty_val = 1.0
+
+    ledger_columns: list[str] = []
+    ledger_rows: list[dict] = []
+    opening_qty = None
+    earliest_atp = None
+
+    if item_input and LEDGER is not None and not LEDGER.empty:
+        df = LEDGER.copy()
+        df_item = df.loc[df["Item"].astype(str) == item_input].copy()
+        if not df_item.empty:
+            # Opening snapshot (OPEN kind) – take latest by date
+            open_rows = df_item.loc[df_item["Kind"].astype(str) == "OPEN"].copy()
+            if not open_rows.empty and "Opening" in open_rows.columns:
+                open_rows = open_rows.sort_values("Date")
+                opening_qty = _aggregate_metric(open_rows["Opening"])
+
+            # Prepare ledger table rows (date, kind, delta, projected)
+            keep_cols = []
+            for c in (
+                "Date",
+                "Kind",
+                "Source",
+                "Delta",
+                "Projected_NAV",
+                "NAV_before",
+                "NAV_after",
+                "QB Num",
+                "P. O. #",
+                "Name",
+            ):
+                if c in df_item.columns and c not in keep_cols:
+                    keep_cols.append(c)
+            if keep_cols:
+                df_item = df_item.sort_values(["Date", "Kind"])
+                df_item["Date"] = pd.to_datetime(df_item["Date"], errors="coerce").dt.strftime("%Y-%m-%d")
+                ledger_columns = keep_cols
+                ledger_rows = (
+                    df_item[keep_cols].fillna("").astype(str).to_dict(orient="records")
+                )
+
+        earliest_atp_dt = _lookup_earliest_atp_date(item_input, qty=qty_val)
+        if earliest_atp_dt is not None:
+            earliest_atp = earliest_atp_dt.strftime("%Y-%m-%d")
+
+    return render_template_string(
+        QUOTE_TPL,
+        item_val=item_input,
+        qty_val=qty_val,
+        opening_qty=opening_qty,
+        earliest_atp=earliest_atp,
+        ledger_columns=ledger_columns,
+        ledger_rows=ledger_rows,
+        loaded_at=_LAST_LOADED_AT.strftime("%Y-%m-%d %H:%M:%S") if _LAST_LOADED_AT else "",
+    )
 
 if __name__ == "__main__":
     # Flask dev server
