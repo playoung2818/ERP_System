@@ -134,6 +134,14 @@ INDEX_TPL = """
     <a class="btn btn-lg" href="/production_planning">Open</a>
   </div>
 
+  <div class="inv-cta mt-3" style="background:#dc2626;">
+    <div>
+      <div class="title">Quotation Lookup</div>
+      <div class="sub">Ledger + earliest ATP date by item</div>
+    </div>
+    <a class="btn btn-lg" href="/quotation_lookup">Open</a>
+  </div>
+
   {% if order_summary %}
   <div class="summary-card bg-white mb-4 p-4">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">

@@ -5,7 +5,7 @@ from sqlalchemy import create_engine
 from config import (
     DATABASE_DSN, DB_SCHEMA,
     TBL_INVENTORY, TBL_STRUCTURED, TBL_SALES_ORDER,
-    TBL_POD, TBL_Shipping, TBL_LEDGER, TBL_ITEM_SUMMARY
+    TBL_POD, TBL_Shipping, TBL_LEDGER, TBL_ITEM_SUMMARY, TBL_ITEM_ATP
 )
 from io_ops import (
     extract_inputs, write_to_db, write_final_sales_order_to_gsheet,
@@ -81,7 +81,7 @@ def main():
     write_to_db(ship,       schema=DB_SCHEMA, table=TBL_Shipping)
     write_to_db(ledger,     schema=DB_SCHEMA, table=TBL_LEDGER)
     write_to_db(item_summary, schema=DB_SCHEMA, table=TBL_ITEM_SUMMARY)
-    write_to_db(atp_view,   schema=DB_SCHEMA, table="item_atp")
+    write_to_db(atp_view,   schema=DB_SCHEMA, table=TBL_ITEM_ATP)
 
     print(
         f"✅ Loaded: {DB_SCHEMA}.{TBL_SALES_ORDER}={len(so_full)}; "

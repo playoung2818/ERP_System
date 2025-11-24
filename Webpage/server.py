@@ -13,8 +13,8 @@ from ui import (
     ITEM_TPL,
     INVENTORY_TPL,
     PRODUCTION_TPL,
-    QUOTE_TPL,
 )
+from quote_ui import QUOTE_TPL
 
 app = Flask(__name__)
 
@@ -293,7 +293,11 @@ def _load_from_db(force: bool = False):
             nav = _read_table("public", "NT Shipping Schedule")
             open_po = _read_table("public", "Open_Purchase_Orders")
             ledger = _read_table("public", "ledger_analytics")
-            item_atp = _read_table("public", "item_atp")
+            # item_atp is optional; if missing, fall back to empty frame
+            try:
+                item_atp = _read_table("public", "item_atp")
+            except Exception:
+                item_atp = pd.DataFrame(columns=["Item", "Date", "Projected_NAV", "FutureMin_NAV"])
 
             for c in ("Ship Date", "Order Date"):
                 _safe_date_col(so, c)
@@ -373,28 +377,72 @@ def _aggregate_metric(series: pd.Series) -> int | float | None:
 
 def _lookup_earliest_atp_date(item: str, qty: float = 1.0) -> datetime | None:
     """
-    Best-effort ATP lookup based on precomputed item_atp table.
-    Returns earliest Date where FutureMin_NAV >= qty for the given item,
-    restricted to dates >= today.
+    Best-effort ATP lookup.
+
+    Preferred source: precomputed item_atp (faster, computed in ETL).
+    Fallback: derive FutureMin_NAV on the fly from the ledger_analytics
+    table for the specific item when item_atp is missing or empty.
     """
-    global ITEM_ATP
-    if ITEM_ATP is None or ITEM_ATP.empty:
-        return None
-
-    df = ITEM_ATP.copy()
-    if "Item" not in df.columns or "Date" not in df.columns or "FutureMin_NAV" not in df.columns:
-        return None
-
     today = datetime.today().date()
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-    mask = (
-        df["Item"].astype(str) == str(item)
-    ) & df["Date"].notna() & (df["Date"].dt.date >= today)
-    df_item = df.loc[mask, ["Date", "FutureMin_NAV"]].dropna(subset=["FutureMin_NAV"])
+
+    # -------- primary: item_atp table --------
+    if ITEM_ATP is not None and not ITEM_ATP.empty:
+        df = ITEM_ATP.copy()
+        if {"Item", "Date", "FutureMin_NAV"}.issubset(df.columns):
+            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+            mask = (
+                df["Item"].astype(str) == str(item)
+            ) & df["Date"].notna() & (df["Date"].dt.date >= today)
+            df_item = df.loc[mask, ["Date", "FutureMin_NAV"]].dropna(subset=["FutureMin_NAV"])
+            if not df_item.empty:
+                df_item["FutureMin_NAV"] = pd.to_numeric(df_item["FutureMin_NAV"], errors="coerce")
+                ok = df_item["FutureMin_NAV"] >= float(qty)
+                candidates = df_item.loc[ok, "Date"]
+                if not candidates.empty:
+                    return candidates.min().to_pydatetime()
+
+    # -------- fallback: compute from ledger --------
+    if LEDGER is None or LEDGER.empty:
+        return None
+    df_ledger = LEDGER.copy()
+    if not {"Item", "Date", "Projected_NAV"}.issubset(df_ledger.columns):
+        return None
+
+    df_item = df_ledger.loc[df_ledger["Item"].astype(str) == str(item)].copy()
     if df_item.empty:
         return None
 
-    df_item["FutureMin_NAV"] = pd.to_numeric(df_item["FutureMin_NAV"], errors="coerce")
+    df_item["Date"] = pd.to_datetime(df_item["Date"], errors="coerce")
+    df_item = df_item.loc[df_item["Date"].notna()].copy()
+    if df_item.empty:
+        return None
+
+    df_item["Projected_NAV"] = pd.to_numeric(df_item["Projected_NAV"], errors="coerce")
+
+    # Ignore dummy far-future placeholders and apply a reasonable horizon
+    cutoff = pd.Timestamp("2026-07-04")
+    dummy_dates = {pd.Timestamp("2099-07-04"), pd.Timestamp("2099-12-31")}
+    df_item = df_item.loc[~df_item["Date"].isin(dummy_dates)]
+    df_item = df_item.loc[df_item["Date"] < cutoff]
+    if df_item.empty:
+        return None
+
+    df_item.sort_values("Date", inplace=True)
+
+    # backward cumulative min of Projected_NAV over time (per item timeline)
+    vals = df_item["Projected_NAV"].values[::-1]
+    future_min = []
+    current_min = float("inf")
+    for v in vals:
+        v = float(v)
+        current_min = v if current_min == float("inf") else min(current_min, v)
+        future_min.append(current_min)
+    df_item["FutureMin_NAV"] = future_min[::-1]
+
+    df_item = df_item.loc[df_item["Date"].dt.date >= today, ["Date", "FutureMin_NAV"]]
+    if df_item.empty:
+        return None
+
     ok = df_item["FutureMin_NAV"] >= float(qty)
     candidates = df_item.loc[ok, "Date"]
     if candidates.empty:
@@ -1018,7 +1066,7 @@ def api_item_suggest():
         contains = [i for i in items if ql in i.lower() and i not in starts]
         out = (starts + contains)[:20]
         return jsonify({"ok": True, "items": out})
-        except Exception as e:
+    except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/quotation_lookup")
@@ -1045,14 +1093,20 @@ def quotation_lookup():
         df = LEDGER.copy()
         df_item = df.loc[df["Item"].astype(str) == item_input].copy()
         if not df_item.empty:
-            # Opening snapshot (OPEN kind) – take latest by date
-            open_rows = df_item.loc[df_item["Kind"].astype(str) == "OPEN"].copy()
-            if not open_rows.empty and "Opening" in open_rows.columns:
-                open_rows = open_rows.sort_values("Date")
-                opening_qty = _aggregate_metric(open_rows["Opening"])
+            # Opening snapshot:
+            # 1) Prefer explicit OPEN rows; 2) if none, fall back to any Opening values.
+            if "Opening" in df_item.columns:
+                open_rows = df_item.loc[df_item["Kind"].astype(str) == "OPEN"].copy()
+                if not open_rows.empty:
+                    open_rows = open_rows.sort_values("Date")
+                    opening_qty = _aggregate_metric(open_rows["Opening"])
+                else:
+                    opening_series = pd.to_numeric(df_item["Opening"], errors="coerce").dropna()
+                    if not opening_series.empty:
+                        opening_qty = _aggregate_metric(opening_series)
 
             # Prepare ledger table rows (date, kind, delta, projected)
-            keep_cols = []
+            keep_cols: list[str] = []
             for c in (
                 "Date",
                 "Kind",
@@ -1067,13 +1121,37 @@ def quotation_lookup():
             ):
                 if c in df_item.columns and c not in keep_cols:
                     keep_cols.append(c)
+
             if keep_cols:
                 df_item = df_item.sort_values(["Date", "Kind"])
                 df_item["Date"] = pd.to_datetime(df_item["Date"], errors="coerce").dt.strftime("%Y-%m-%d")
+
+                # Determine minimum Projected_NAV for highlighting (after sort so alignment is correct)
+                min_nav_value = None
+                proj_series = None
+                if "Projected_NAV" in df_item.columns:
+                    proj_series = pd.to_numeric(df_item["Projected_NAV"], errors="coerce")
+                    if not proj_series.dropna().empty:
+                        min_nav_value = proj_series.min()
+
+                records = df_item[keep_cols].fillna("").astype(str).to_dict(orient="records")
+
+                # Attach _is_min_nav flag for UI highlighting
+                if min_nav_value is not None and proj_series is not None:
+                    proj_vals = proj_series.tolist()
+                    for rec, v in zip(records, proj_vals):
+                        try:
+                            fv = float(v)
+                        except Exception:
+                            fv = None
+                        rec["_is_min_nav"] = (fv == float(min_nav_value))
+                else:
+                    for rec in records:
+                        rec["_is_min_nav"] = False
+
                 ledger_columns = keep_cols
-                ledger_rows = (
-                    df_item[keep_cols].fillna("").astype(str).to_dict(orient="records")
-                )
+                ledger_rows = records
+
 
         earliest_atp_dt = _lookup_earliest_atp_date(item_input, qty=qty_val)
         if earliest_atp_dt is not None:
