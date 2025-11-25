@@ -3,8 +3,6 @@ import re, numpy as np, pandas as pd
 
 # ---------- mappings ----------
 mappings = {
-    'GC-J-A64GB-O-Industrial-Nvidia': 'GC-Jetson-AGX64GB-Orin-Industrial-Nvidia-JetPack-6.0',
-    'GC-Jetson-AGX64GB-Orin-Nvidia': 'GC-Jetson-AGX64GB-Orin-Nvidia-JetPack-6.0',
     'AccsyBx-Cardholder-10108GC-5080': 'AccsyBx-Cardholder-10108GC-5080_70_70Ti',
     'AccsyBx-Cardholder-10208GC-5080' : 'AccsyBx-Cardholder-10208GC-5080_70_70Ti',
     'Cblkit-FP-NRU-230V-AWP_NRU-240S': 'Cblkit-FP-NRU-230V-AWP_NRU-240S-AWP',
@@ -17,10 +15,10 @@ mappings = {
     'M.280-SSD-256GB-PCIe44-TLC5WT-T': 'M.280-SSD-256GB-PCIe44-TLC5WT-TD',
     'M.280-SSD-512GB-PCIe44-TLC5WT-T': 'M.280-SSD-512GB-PCIe44-TLC5WT-TD',
     'E-mPCIe-BTWifi-WT-6218_Mod_40CM': 'Extnd-mPCIeHS-BTWifi-WT-6218_Mod_Cbl-40CM_kits',
-    'GC-Jetson-NX16G-Orin-Nvidia': 'GC-Jetson-NX16G-Orin-Nvidia-JetPack6.0',
     'FPnl-3Ant-NRU-170-PPC series': 'FPnl-3Ant-NRU-170-PPCseries',
 
 }
+
 
 # ---------- small utils ----------
 def normalize_wo_number(wo: str) -> str:
@@ -77,7 +75,7 @@ def transform_inventory(inventory_df: pd.DataFrame) -> pd.DataFrame:
     return inv
 
 def transform_pod(df_pod: pd.DataFrame) -> pd.DataFrame:
-    pod = df_pod.drop(columns=['Amount','Open Balance',"Rcv'd","Qty"], axis =1)
+    pod = df_pod.drop(columns=['Amount','Open Balance',"Rcv'd","Qty", 'Deliv Date'], axis =1)
     pod.rename(columns={"Date":"Order Date","Num":"QB Num","Backordered":"Qty(+)"},inplace=True)
     pod = pod.drop(pod.columns[[0]], axis =1)
     # pod = pod[pod['Name'] == 'Neousys Technology Incorp.'].copy()
@@ -89,7 +87,6 @@ def transform_pod(df_pod: pd.DataFrame) -> pd.DataFrame:
     pod['Memo'] = pod['Memo'].str.replace("*","")
     pod.rename(columns={"Memo":"Item"},inplace=True)
     pod['Order Date']= pd.to_datetime(pod['Order Date'])
-    pod['Deliv Date']= pd.to_datetime(pod['Deliv Date'])
     pod['Item'] = pod['Item'].replace(mappings)
     df_pod = pd.DataFrame(pod)
     return df_pod
@@ -127,7 +124,7 @@ def transform_shipping(df_shipping_schedule: pd.DataFrame) -> pd.DataFrame:
     Ship["Qty(+)"] = pd.to_numeric(Ship["Qty(+)"], errors="coerce").fillna(0).astype(int)
 
     # --- Pre/Bare logic ---
-    model_ok = Ship["Item"].str.upper().str.startswith(("N", "SEMIL", "POC"), na=False)
+    model_ok = Ship["Item"].str.upper().str.startswith(("N", "SEMIL", "POC", "F"), na=False)
     # accept English or Chinese comma: ", including" or "， including"
     including_ok = Ship["Description"].str.contains(r"[，,]\s*including\b", case=False, na=False)
 
@@ -138,7 +135,7 @@ def transform_shipping(df_shipping_schedule: pd.DataFrame) -> pd.DataFrame:
     desired = ["SO NO.", "QB Num", "Item", "Description", "Ship Date", "Qty(+)", "Pre/Bare"]
     Ship = Ship.reindex(columns=[c for c in desired if c in Ship.columns] +
                                [c for c in Ship.columns if c not in desired])
-
+    
     return Ship
 
 # ---------- reorder helper ----------

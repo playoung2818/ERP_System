@@ -5,6 +5,48 @@ import pandas as pd
 from pandas.api.types import CategoricalDtype
 from core import _norm_cols
 
+
+pattern_mappings = [
+    (
+        re.compile(
+            r"^GC-Jetson-AGX64GB-Orin-Nvidia(?:[- ]?JetPack[-_ ]?[\d\.]+)?$",
+            re.IGNORECASE,
+        ),
+        "GC-Jetson-AGX64GB-Orin-Nvidia",
+    ),
+    (
+        re.compile(
+            r"^GC-Jetson-AGX32GB-Orin-Nvidia(?:[- ]?JetPack[-_ ]?[\d\.]+)?$",
+            re.IGNORECASE,
+        ),
+        "GC-Jetson-AGX32GB-Orin-Nvidia",
+    ),
+    (
+        re.compile(
+            r"^GC-Jetson-NX16G-Orin-Nvidia(?:[- ]?JetPack[-_ ]?[\d\.]+)?$",
+            re.IGNORECASE,
+        ),
+        "GC-Jetson-NX16G-Orin-Nvidia",
+    ),
+]
+
+
+def normalize_item(name: str) -> str:
+    """
+    1. Try direct dictionary mapping.
+    2. If not found, try pattern-based normalization.
+    """
+
+    # regex match
+    for pattern, replacement in pattern_mappings:
+        if pattern.match(name):
+            return replacement
+
+    # no match → return original
+    return name
+
+
+
 ## 1) NAV (shipping) → expand pre-installed components
 INCL_SPLIT = re.compile(r"\bincluding\b", re.IGNORECASE)
 QTYX_RE = re.compile(r"^\s*(\d+)\s*x\s*(.+)\s*$", re.IGNORECASE)  # "2x SSD-1TB"
@@ -88,6 +130,7 @@ def expand_nav_preinstalled(NAV: pd.DataFrame) -> pd.DataFrame:
     expanded_all["Qty_per_parent"] = pd.to_numeric(expanded_all["Qty_per_parent"], errors="coerce").fillna(1.0)
     expanded_all["IsParent"]       = expanded_all["IsParent"].astype(bool)
     expanded_all["Date"] = pd.to_datetime(expanded_all["Ship Date"], errors="coerce") + pd.Timedelta(days=5)
+    expanded_all["Item"] = expanded_all["Item"].astype(str).map(normalize_item)
     return expanded_all
 
 

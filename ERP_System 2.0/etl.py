@@ -54,7 +54,8 @@ def main():
 
     # -------- Ledger from prebuilt events --------
     ledger, item_summary, violations = build_ledger_from_events(structured, events_all)
-    print(violations)
+    cols = ["Date", "Item", "Projected_NAV", "Name", "QB Num"]
+    print(violations.loc[:, cols])
 
     # -------- ATP view (Available-to-Promise) --------
     atp_view = build_atp_view(ledger)
