@@ -1,7 +1,9 @@
 # server.py
 import os
+import sys
 import json
 from datetime import datetime
+from pathlib import Path
 from flask import Flask, request, render_template_string, jsonify, abort, redirect, url_for, send_file, Response
 import pandas as pd
 from sqlalchemy import create_engine, text
@@ -15,6 +17,13 @@ from ui import (
     PRODUCTION_TPL,
 )
 from quote_ui import QUOTE_TPL
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+ERP_MODULE_DIR = REPO_ROOT / "ERP_System 2.0"
+if str(ERP_MODULE_DIR) not in sys.path:
+    sys.path.append(str(ERP_MODULE_DIR))
+
+from erp_normalize import normalize_item
 
 app = Flask(__name__)
 
@@ -63,26 +72,6 @@ TABLE_HEADER_LABELS = {
     "Recommended Restock Qty": "Restock Qty",
     "Component_Status": "Status",
     "Ship Date": "Ship Date",
-}
-
-# Basic item name normalization (keep in sync with ERP core)
-MAPPINGS = {
-    "GC-J-A64GB-O-Industrial-Nvidia": "GC-Jetson-AGX64GB-Orin-Industrial-Nvidia-JetPack-6.0",
-    "GC-Jetson-AGX64GB-Orin-Nvidia": "GC-Jetson-AGX64GB-Orin-Nvidia-JetPack-6.0",
-    "AccsyBx-Cardholder-10108GC-5080": "AccsyBx-Cardholder-10108GC-5080_70_70Ti",
-    "AccsyBx-Cardholder-10208GC-5080": "AccsyBx-Cardholder-10208GC-5080_70_70Ti",
-    "Cblkit-FP-NRU-230V-AWP_NRU-240S": "Cblkit-FP-NRU-230V-AWP_NRU-240S-AWP",
-    "E-mPCIe-GPS-M800_Mod_40CM": "Extnd-mPCIeHS_GPS-M800_Mod_Cbl-40CM_kits",
-    "Cbl-M12A5F-OT2-B-Red-Fuse-100CM": "Cbl-M12A5F-OT2-Black-Red-Fuse-100CM",
-    "AccsyBx-Cardholder-9160GC-2000E": "AccsyBx-Cardholder-9160GC-2000EAda",
-    "M.280-SSD-4TB-PCIe4-TLCWT5NH-IK": "M.280-SSD-4TB-PCIe4-TLC5WT-NH-IK",
-    "M.242-SSD-128GB-PCIe34-TLC5WT-T": "M.242-SSD-128GB-PCIe34-TLC5WT-TD",
-    "M.242-SSD-256GB-PCIe34-TLC5WT-T": "M.242-SSD-256GB-PCIe34-TLC5WT-TD",
-    "M.280-SSD-256GB-PCIe44-TLC5WT-T": "M.280-SSD-256GB-PCIe44-TLC5WT-TD",
-    "M.280-SSD-512GB-PCIe44-TLC5WT-T": "M.280-SSD-512GB-PCIe44-TLC5WT-TD",
-    "E-mPCIe-BTWifi-WT-6218_Mod_40CM": "Extnd-mPCIeHS-BTWifi-WT-6218_Mod_Cbl-40CM_kits",
-    "GC-Jetson-NX16G-Orin-Nvidia": "GC-Jetson-NX16G-Orin-Nvidia-JetPack6.0",
-    "FPnl-3Ant-NRU-170-PPC series": "FPnl-3Ant-NRU-170-PPCseries",
 }
 
 # -------- helpers --------
@@ -206,7 +195,7 @@ def _build_final_sales_order_from_db() -> pd.DataFrame:
     pdf_ref = pdf_orders_df.rename(columns={"WO": "QB Num", "Product Number": "Item"})
     final_sales_order = _reorder_df_out_by_output(pdf_ref, df_out)
 
-    final_sales_order["Item"] = final_sales_order["Item"].replace(MAPPINGS)
+    final_sales_order["Item"] = final_sales_order["Item"].map(normalize_item)
     final_sales_order = final_sales_order.loc[:, ~final_sales_order.columns.duplicated()]
 
     return final_sales_order

@@ -17,25 +17,14 @@ from datetime import datetime
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl import load_workbook
 import os
+from pathlib import Path
 
-# Some Part Names are too long to show in QB
-mappings = {
-    'GC-J-A64GB-O-Industrial-Nvidia': 'GC-Jetson-AGX64GB-Orin-Industrial-Nvidia-JetPack-6.0',
-    'GC-Jetson-AGX64GB-Orin-Nvidia': 'GC-Jetson-AGX64GB-Orin-Nvidia-JetPack-6.0',
-    'AccsyBx-Cardholder-10108GC-5080': 'AccsyBx-Cardholder-10108GC-5080_70_70Ti',
-    'Cblkit-FP-NRU-230V-AWP_NRU-240S': 'Cblkit-FP-NRU-230V-AWP_NRU-240S-AWP',
-    'E-mPCIe-GPS-M800_Mod_40CM': 'Extnd-mPCIeHS_GPS-M800_Mod_Cbl-40CM_kits',
-    'Cbl-M12A5F-OT2-B-Red-Fuse-100CM': 'Cbl-M12A5F-OT2-Black-Red-Fuse-100CM',
-    'AccsyBx-Cardholder-9160GC-2000E': 'AccsyBx-Cardholder-9160GC-2000EAda',
-    'M.280-SSD-4TB-PCIe4-TLCWT5NH-IK': 'M.280-SSD-4TB-PCIe4-TLCWT5-NH-IK',
-    'M.242-SSD-128GB-PCIe34-TLC5WT-T': 'M.242-SSD-128GB-PCIe34-TLC5WT-TD',
-    'M.242-SSD-256GB-PCIe34-TLC5WT-T': 'M.242-SSD-256GB-PCIe34-TLC5WT-TD',
-    'M.280-SSD-256GB-PCIe44-TLC5WT-T': 'M.280-SSD-256GB-PCIe44-TLC5WT-TD',
-    'M.280-SSD-512GB-PCIe44-TLC5WT-T': 'M.280-SSD-512GB-PCIe44-TLC5WT-TD',
-    'E-mPCIe-BTWifi-WT-6218_Mod_40CM': 'Extnd-mPCIeHS-BTWifi-WT-6218_Mod_Cbl-40CM_kits',
-    'GC-Jetson-NX16G-Orin-Nvidia': 'GC-Jetson-NX16G-Orin-Nvidia-JetPack6.0',
-    'FPnl-3Ant-NRU-170-PPC series': 'FPnl-3Ant-NRU-170-PPCseries',
-}
+ERP_MODULE_DIR = Path(__file__).resolve().parents[1] / "ERP_System 2.0"
+if str(ERP_MODULE_DIR) not in sys.path:
+    sys.path.append(str(ERP_MODULE_DIR))
+
+from erp_normalize import normalize_item
+
 
 
 # --------------------
@@ -238,7 +227,7 @@ def transform_sales_order(df_sales_order: pd.DataFrame) -> pd.DataFrame:
     df = df[~df["Item"].str.startswith("total", na=False)]
     df = df[~df["Item"].str.lower().isin(["forwarding charge", "tariff (estimation)"])]
     df = df[df["Inventory Site"] == "WH01S-NTA"]
-    df['Item'] = df['Item'].replace(mappings)
+    df["Item"] = df["Item"].map(normalize_item)
     return df
 
 def transform_inventory(inventory_df: pd.DataFrame) -> pd.DataFrame:
@@ -246,7 +235,7 @@ def transform_inventory(inventory_df: pd.DataFrame) -> pd.DataFrame:
     # only rename ONCE
     inv = inv.rename(columns={"Unnamed: 0":"Part_Number"})
     inv["Part_Number"] = inv["Part_Number"].astype(str).str.strip()
-    inv['Part_Number'] = inv['Part_Number'].replace(mappings)
+    inv["Part_Number"] = inv["Part_Number"].map(normalize_item)
     # make numeric safely
     for c in ["On Hand","On Sales Order","On PO","Available"]:
         if c in inv.columns:
@@ -268,7 +257,7 @@ def transform_pod(df_pod: pd.DataFrame) -> pd.DataFrame:
     pod['Deliv Date']= pd.to_datetime(pod['Deliv Date'])
     pod['Order Date'] = pod['Order Date'].dt.strftime('%Y/%m/%d')
     pod['Deliv Date'] = pod['Deliv Date'].dt.strftime('%Y/%m/%d')
-    pod['Item'] = pod['Item'].replace(mappings)
+    pod["Item"] = pod["Item"].map(normalize_item)
     df_pod = pd.DataFrame(pod)
     return df_pod
 
@@ -435,7 +424,7 @@ def build_structured_df(
     final_sales_order = reorder_df_out_by_output(pdf_ref, df_out)
 
     # Map the short->long part names
-    final_sales_order['Item'] = final_sales_order['Item'].replace(mappings)
+    final_sales_order["Item"] = final_sales_order["Item"].map(normalize_item)
     final_sales_order = final_sales_order.loc[:, ~final_sales_order.columns.duplicated()]
 
 

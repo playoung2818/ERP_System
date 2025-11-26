@@ -4,48 +4,7 @@ import numpy as np
 import pandas as pd
 from pandas.api.types import CategoricalDtype
 from core import _norm_cols
-
-
-pattern_mappings = [
-    (
-        re.compile(
-            r"^GC-Jetson-AGX64GB-Orin-Nvidia(?:[- ]?JetPack[-_ ]?[\d\.]+)?$",
-            re.IGNORECASE,
-        ),
-        "GC-Jetson-AGX64GB-Orin-Nvidia",
-    ),
-    (
-        re.compile(
-            r"^GC-Jetson-AGX32GB-Orin-Nvidia(?:[- ]?JetPack[-_ ]?[\d\.]+)?$",
-            re.IGNORECASE,
-        ),
-        "GC-Jetson-AGX32GB-Orin-Nvidia",
-    ),
-    (
-        re.compile(
-            r"^GC-Jetson-NX16G-Orin-Nvidia(?:[- ]?JetPack[-_ ]?[\d\.]+)?$",
-            re.IGNORECASE,
-        ),
-        "GC-Jetson-NX16G-Orin-Nvidia",
-    ),
-]
-
-
-def normalize_item(name: str) -> str:
-    """
-    1. Try direct dictionary mapping.
-    2. If not found, try pattern-based normalization.
-    """
-
-    # regex match
-    for pattern, replacement in pattern_mappings:
-        if pattern.match(name):
-            return replacement
-
-    # no match → return original
-    return name
-
-
+from erp_normalize import normalize_item
 
 ## 1) NAV (shipping) → expand pre-installed components
 INCL_SPLIT = re.compile(r"\bincluding\b", re.IGNORECASE)
@@ -279,13 +238,12 @@ def build_reconcile_events(
         raise ValueError(f"inv_wh missing column: {item_col_wh}")
 
 
-    db["Item"] = db[item_col_db].astype(str).str.strip()
-    wh["Item"] = wh[item_col_wh].astype(str).str.strip()
+    def _apply_normalizer(val: str) -> str:
+        base = normalize_item(val)
+        return mappings.get(base, base) if mappings else base
 
-    # optional name normalization
-    if mappings:
-        db["Item"] = db["Item"].replace(mappings)
-        wh["Item"] = wh["Item"].replace(mappings)
+    db["Item"] = db[item_col_db].astype(str).str.strip().map(_apply_normalizer)
+    wh["Item"] = wh[item_col_wh].astype(str).str.strip().map(_apply_normalizer)
 
     db[onhand_col] = pd.to_numeric(db.get(onhand_col, 0), errors="coerce").fillna(0.0)
     wh[onhand_col] = pd.to_numeric(wh.get(onhand_col, 0), errors="coerce").fillna(0.0)

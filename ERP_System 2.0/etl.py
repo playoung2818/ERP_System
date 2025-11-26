@@ -13,7 +13,7 @@ from io_ops import (
 )
 from core import (
     transform_sales_order, transform_inventory, transform_pod, transform_shipping,
-    build_structured_df, prepare_erp_view, add_onhand_minus_wip, mappings
+    build_structured_df, prepare_erp_view, add_onhand_minus_wip
 )
 from ledger import (
     expand_nav_preinstalled, build_events, build_reconcile_events,
