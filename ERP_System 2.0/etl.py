@@ -1,35 +1,51 @@
 import logging
 import pandas as pd
-from sqlalchemy import create_engine
 
 from config import (
-    DATABASE_DSN, DB_SCHEMA,
-    TBL_INVENTORY, TBL_STRUCTURED, TBL_SALES_ORDER,
-    TBL_POD, TBL_Shipping, TBL_LEDGER, TBL_ITEM_SUMMARY, TBL_ITEM_ATP
+    DB_SCHEMA,
+    TBL_INVENTORY,
+    TBL_STRUCTURED,
+    TBL_SALES_ORDER,
+    TBL_POD,
+    TBL_Shipping,
+    TBL_LEDGER,
+    TBL_ITEM_SUMMARY,
+    TBL_ITEM_ATP,
 )
 from io_ops import (
-    extract_inputs, write_to_db, write_final_sales_order_to_gsheet,
-    save_not_assigned_so, fetch_word_files_df, fetch_pdf_orders_df_from_supabase
+    extract_inputs,
+    write_to_db,
+    write_final_sales_order_to_gsheet,
+    save_not_assigned_so,
+    fetch_word_files_df,
+    fetch_pdf_orders_df_from_supabase,
 )
 from core import (
-    transform_sales_order, transform_inventory, transform_pod, transform_shipping,
-    build_structured_df, prepare_erp_view, add_onhand_minus_wip
+    transform_sales_order,
+    transform_inventory,
+    transform_pod,
+    transform_shipping,
+    build_structured_df,
+    prepare_erp_view,
+    add_onhand_minus_wip,
 )
 from ledger import (
-    expand_nav_preinstalled, build_events, build_reconcile_events,
-    build_ledger_from_events, _order_events
+    expand_nav_preinstalled,
+    build_events,
+    build_reconcile_events,
+    build_ledger_from_events,
+    _order_events,
 )
 from atp import build_atp_view
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
-
 def main():
     # -------- Extract --------
     so_raw, inv_raw, ship_raw, pod_raw = extract_inputs()
     word_files_df = fetch_word_files_df("http://192.168.60.133:5001/api/word-files")
-    pdf_orders_df = fetch_pdf_orders_df_from_supabase(DATABASE_DSN)
+    pdf_orders_df = fetch_pdf_orders_df_from_supabase()
 
     # -------- Transform (raw → tidy) --------
     so_full = transform_sales_order(so_raw)   # sales orders

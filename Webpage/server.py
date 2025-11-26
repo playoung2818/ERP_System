@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from flask import Flask, request, render_template_string, jsonify, abort, redirect, url_for, send_file, Response
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 from ui import (
     ERR_TPL,
@@ -24,18 +24,14 @@ if str(ERP_MODULE_DIR) not in sys.path:
     sys.path.append(str(ERP_MODULE_DIR))
 
 from erp_normalize import normalize_item
+from db_config import get_engine, DATABASE_DSN
 
 app = Flask(__name__)
 
 # =========================
 # DB ENGINE
 # =========================
-DATABASE_DSN = os.getenv(
-    "DATABASE_DSN",
-    "postgresql+psycopg://postgres.avcznjglmqhmzqtsrlfg:Czheyuan0227@"
-    "aws-0-us-east-2.pooler.supabase.com:6543/postgres?sslmode=require"
-)
-engine = create_engine(DATABASE_DSN, pool_pre_ping=True)
+engine = get_engine()
 
 # =========================
 # Data cache

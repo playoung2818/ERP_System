@@ -53,6 +53,7 @@ requests==2.32.5
 requests-oauthlib==2.0.0
 rsa==4.9.1
 six==1.17.0
+python-dotenv==1.0.1
 SQLAlchemy==2.0.43
 stack-data==0.6.3
 tornado==6.5.2

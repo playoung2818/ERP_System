@@ -177,7 +177,7 @@ def build_structured_df(
         .copy()
     )
 
-    # Keep auxiliary WO (for merge fallback)
+    # Normalize WO Number
     df_out["WO"] = ""
     for alt in ["WO", "WO_Number", "NTA Order ID", "SO Number"]:
         if alt in df_sales_order.columns:

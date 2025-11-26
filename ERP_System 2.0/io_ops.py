@@ -1,17 +1,17 @@
 from __future__ import annotations
 import os, json, requests, pandas as pd, numpy as np
-from sqlalchemy import create_engine
 import gspread
 from gspread_dataframe import set_with_dataframe
 from oauth2client.service_account import ServiceAccountCredentials
 
 from core import normalize_wo_number
+from db_config import get_engine
 
-from config import SALES_ORDER_FILE, WAREHOUSE_INV_FILE, SHIPPING_SCHEDULE_FILE, POD_FILE, DATABASE_DSN
+from config import SALES_ORDER_FILE, WAREHOUSE_INV_FILE, SHIPPING_SCHEDULE_FILE, POD_FILE
 
 # ---------- DB engine ----------
 def engine():
-    return create_engine(DATABASE_DSN, pool_pre_ping=True)
+    return get_engine()
 
 # ---------- Extract ----------
 def extract_inputs():
@@ -34,9 +34,9 @@ def fetch_word_files_df(api_url: str) -> pd.DataFrame:
     wf["WO_Number"] = wf["WO_Number"].astype(str).apply(normalize_wo_number)
     return wf
 
-def fetch_pdf_orders_df_from_supabase(dsn: str) -> pd.DataFrame:
+def fetch_pdf_orders_df_from_supabase() -> pd.DataFrame:
     """Return two columns ['WO','Product Number'] built from pdf_file_log.extracted_data JSON."""
-    eng = create_engine(dsn, pool_pre_ping=True)
+    eng = get_engine()
     rows = pd.read_sql('SELECT order_id, extracted_data FROM public.pdf_file_log', eng)
 
     def rows_from_json(extracted_data, order_id=""):

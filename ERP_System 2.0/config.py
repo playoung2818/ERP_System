@@ -1,15 +1,22 @@
+import os
+from pathlib import Path
+
 # === File paths ===
-SALES_ORDER_FILE = r"C:\Users\Admin\OneDrive - neousys-tech\Share NTA Warehouse\Daily Update\Open Sales Order 11_25_2025.CSV"
-WAREHOUSE_INV_FILE = r"C:\Users\Admin\OneDrive - neousys-tech\Share NTA Warehouse\Daily Update\WH01S_11_25.CSV"
-SHIPPING_SCHEDULE_FILE = r"C:\Users\Admin\OneDrive - neousys-tech\Share NTA Warehouse\Daily Update\NTA_Shipping schedule_20251120.xlsx"
-POD_FILE = r"C:\Users\Admin\OneDrive - neousys-tech\Share NTA Warehouse\Daily Update\POD_11_25.CSV"
+# Detect OneDrive root for the current user
+ONEDRIVE = Path(os.getenv("OneDrive"))
+
+BASE = ONEDRIVE / "Share NTA Warehouse" / "Daily Update"
+
+SALES_ORDER_FILE = BASE / "Open Sales Order 11_25_2025.CSV"
+WAREHOUSE_INV_FILE = BASE / "WH01S_11_25.CSV"
+SHIPPING_SCHEDULE_FILE = BASE / "NTA_Shipping schedule_20251120.xlsx"
+POD_FILE = BASE / "POD_11_25.CSV"
+
 
 # === Supabase/Postgres (pooled) ===
-# add sslmode=require to avoid TLS errors
-DATABASE_DSN = (
-    "postgresql://postgres.avcznjglmqhmzqtsrlfg:Czheyuan0227@"
-    "aws-0-us-east-2.pooler.supabase.com:6543/postgres?sslmode=require"
-)
+# DSN is now provided via environment for security.
+# Re-export from db_config so existing imports continue to work.
+from db_config import DATABASE_DSN  
 
 # === Target tables (pick schema you actually use) ===
 DB_SCHEMA = "public"
