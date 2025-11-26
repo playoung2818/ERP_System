@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 
-# Union of item aliases used across ETL, ledger, and web server
+# MAP from QB to NAV
 ITEM_MAPPINGS: dict[str, str] = {
     "AccsyBx-Cardholder-10108GC-5080": "AccsyBx-Cardholder-10108GC-5080_70_70Ti",
     "AccsyBx-Cardholder-10208GC-5080": "AccsyBx-Cardholder-10208GC-5080_70_70Ti",
@@ -22,6 +22,7 @@ ITEM_MAPPINGS: dict[str, str] = {
     "M.280-SSD-512GB-PCIe44-TLC5WT-T": "M.280-SSD-512GB-PCIe44-TLC5WT-TD",
 }
 
+# MAP from NAV to QB
 PATTERN_MAPPINGS = [
     (
         re.compile(
