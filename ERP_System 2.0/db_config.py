@@ -10,8 +10,14 @@ try:
     # is installed. This keeps secrets out of the code while still being
     # convenient for local development.
     from dotenv import load_dotenv  # type: ignore
+    from pathlib import Path
 
-    load_dotenv()  # loads variables from ".env" in the project root / CWD
+    # Load from current working dir first, then fall back to the .env
+    # that sits next to this file so it works regardless of where you run.
+    load_dotenv()  # CWD
+    env_nearby = Path(__file__).resolve().parent / ".env"
+    if env_nearby.exists():
+        load_dotenv(env_nearby)
 except Exception:
     # If python-dotenv is not installed, we simply skip .env loading.
     pass
