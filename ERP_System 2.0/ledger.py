@@ -202,7 +202,12 @@ def build_ledger_from_events(SO: pd.DataFrame, EVENTS: pd.DataFrame) -> tuple[pd
         & (ledger["Date"] < cutoff)                 # horizon filter
     )
 
-    violations = ledger.loc[mask].copy()
+    violations = (
+    ledger.loc[mask]
+    .sort_values(by="Date")
+    .copy()
+)
+
 
 
     ledger.sort_values(["Item","Date","Kind"], inplace=True, kind="mergesort")

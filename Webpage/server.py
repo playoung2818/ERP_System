@@ -405,10 +405,8 @@ def _lookup_earliest_atp_date(item: str, qty: float = 1.0) -> datetime | None:
     df_item["Projected_NAV"] = pd.to_numeric(df_item["Projected_NAV"], errors="coerce")
 
     # Ignore dummy far-future placeholders and apply a reasonable horizon
-    cutoff = pd.Timestamp("2026-07-04")
     dummy_dates = {pd.Timestamp("2099-07-04"), pd.Timestamp("2099-12-31")}
     df_item = df_item.loc[~df_item["Date"].isin(dummy_dates)]
-    df_item = df_item.loc[df_item["Date"] < cutoff]
     if df_item.empty:
         return None
 

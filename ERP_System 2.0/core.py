@@ -106,7 +106,11 @@ def transform_shipping(df_shipping_schedule: pd.DataFrame) -> pd.DataFrame:
     Ship["Qty(+)"] = pd.to_numeric(Ship["Qty(+)"], errors="coerce").fillna(0).astype(int)
 
     # --- Pre/Bare logic ---
-    model_ok = Ship["Item"].str.upper().str.startswith(("N", "SEMIL", "POC", "F"), na=False)
+    model_ok = (
+    Ship["Item"].str.upper().str.startswith(("N", "SEMIL", "POC", "F"), na=False)
+    & ~Ship["Item"].str.upper().str.startswith("NRU-52S-NX")
+)
+
     # accept English or Chinese comma: ", including" or "， including"
     including_ok = Ship["Description"].str.contains(r"[，,]\s*including\b", case=False, na=False)
 
