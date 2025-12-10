@@ -17,6 +17,39 @@ def enforce_column_order(df: pd.DataFrame, order: list[str]) -> pd.DataFrame:
     back  = [c for c in df.columns if c not in front]
     return df.loc[:, front + back]
 
+def build_wip_lookup(so_full: pd.DataFrame, word_files_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Build a WIP lookup from Word pick statuses + sales order quantities.
+    Counts only fully picked lines (excludes partials) and returns per-part WIP.
+    """
+    # Normalize WO numbers from Word files
+    word_pick = word_files_df.copy()
+    word_pick["WO_Number"] = word_pick["WO_Number"].astype(str).apply(normalize_wo_number)
+    word_pick["Picked_Flag"] = word_pick["status"].astype(str).str.strip().eq("Picked")
+    picked_flags = word_pick.groupby("WO_Number", as_index=False)["Picked_Flag"].max()
+
+    # Merge into sales orders to mark picked/partial
+    sales = so_full.copy()
+    sales["WO_Number"] = sales["QB Num"].astype(str).apply(normalize_wo_number)
+    sales = sales.merge(picked_flags, on="WO_Number", how="left")
+    sales["Picked_Flag"] = sales["Picked_Flag"].fillna(False)
+    sales["Picked"] = np.where(sales["Picked_Flag"], "Picked", "No")
+    partial_col = sales["partial"] if "partial" in sales.columns else False
+    partial_col = pd.Series(partial_col, index=sales.index).fillna(False)
+    mask_partial = sales["Picked_Flag"] & partial_col
+    sales.loc[mask_partial, "Picked"] = "Partial"
+
+    # Sum qty for fully picked lines only
+    picked_lines = (
+        sales.loc[sales["Picked"].eq("Picked")]
+        .groupby("Item", as_index=False)["Qty(-)"].sum()
+        .rename(columns={"Item": "Part_Number", "Qty(-)": "WIP"})
+    )
+    picked_lines["Part_Number"] = picked_lines["Part_Number"].astype(str).str.strip().map(normalize_item)
+    picked_lines["WIP"] = pd.to_numeric(picked_lines["WIP"], errors="coerce").fillna(0)
+    picked_lines["On Hand - WIP"] = np.nan
+    return picked_lines
+
 # ---------- normalization ----------
 def _norm_cols(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -45,15 +78,42 @@ def transform_sales_order(df_sales_order: pd.DataFrame) -> pd.DataFrame:
     df["Item"] = df["Item"].map(normalize_item)
     return df
 
-def transform_inventory(inventory_df: pd.DataFrame) -> pd.DataFrame:
+def transform_inventory(inventory_df: pd.DataFrame, wip_lookup: pd.DataFrame | None = None) -> pd.DataFrame:
     inv = inventory_df.copy()
     inv = inv.rename(columns={"Unnamed: 0":"Part_Number"})
     inv["Part_Number"] = inv["Part_Number"].astype(str).str.strip()
     inv["Part_Number"] = inv["Part_Number"].map(normalize_item)
     # make numeric safely
-    for c in ["On Hand","On Sales Order","On PO","Available"]:
+    for c in ["On Hand","On Sales Order","On PO","Available","On Hand - WIP","WIP"]:
         if c in inv.columns:
             inv[c] = pd.to_numeric(inv[c], errors="coerce").fillna(0)
+
+    # If an external WIP source is provided, merge it in by normalized part number
+    if wip_lookup is not None and not wip_lookup.empty:
+        wip = wip_lookup.copy()
+        if "Part_Number" not in wip.columns and "Item" in wip.columns:
+            wip["Part_Number"] = wip["Item"]
+        if "Part_Number" in wip.columns:
+            wip["Part_Number"] = wip["Part_Number"].astype(str).str.strip().map(normalize_item)
+            keep_cols = [c for c in ["Part_Number", "WIP", "On Hand - WIP"] if c in wip.columns]
+            wip = wip.loc[:, keep_cols].drop_duplicates(subset=["Part_Number"])
+            inv = inv.merge(wip, on="Part_Number", how="left", suffixes=("", "_src"))
+            if "WIP_src" in inv.columns:
+                inv["WIP"] = inv["WIP_src"].combine_first(inv.get("WIP")).fillna(0)
+                inv.drop(columns=["WIP_src"], inplace=True)
+            if "On Hand - WIP_src" in inv.columns:
+                inv["On Hand - WIP"] = inv["On Hand - WIP_src"].combine_first(inv.get("On Hand - WIP"))
+                inv.drop(columns=["On Hand - WIP_src"], inplace=True)
+
+    # seed missing columns
+    if "WIP" not in inv.columns:
+        inv["WIP"] = 0
+    inv["WIP"] = pd.to_numeric(inv["WIP"], errors="coerce").fillna(0)
+    if "On Hand - WIP" not in inv.columns:
+        inv["On Hand - WIP"] = inv.get("On Hand", 0)
+    inv["On Hand - WIP"] = pd.to_numeric(inv["On Hand - WIP"], errors="coerce")
+    inv["On Hand - WIP"] = inv["On Hand - WIP"].fillna(inv["On Hand"] - inv["WIP"])
+
     return inv
 
 def transform_pod(df_pod: pd.DataFrame) -> pd.DataFrame:

@@ -25,6 +25,7 @@ from core import (
     transform_inventory,
     transform_pod,
     transform_shipping,
+    build_wip_lookup,
     build_structured_df,
     prepare_erp_view,
     add_onhand_minus_wip,
@@ -47,9 +48,10 @@ def main():
     word_files_df = fetch_word_files_df("http://192.168.60.133:5001/api/word-files")
     pdf_orders_df = fetch_pdf_orders_df_from_supabase()
 
-    # -------- Transform (raw → tidy) --------
-    so_full = transform_sales_order(so_raw)   # sales orders
-    inv     = transform_inventory(inv_raw)    # warehouse snapshot (today)
+    # -------- Transform (raw -> tidy) --------
+    so_full = transform_sales_order(so_raw)                 # sales orders
+    wip_lookup = build_wip_lookup(so_full, word_files_df)   # WIP from Word picks
+    inv     = transform_inventory(inv_raw, wip_lookup)      # warehouse snapshot (today)
     pod     = transform_pod(pod_raw)
     ship    = transform_shipping(ship_raw)
 
