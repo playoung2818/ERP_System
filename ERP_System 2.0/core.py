@@ -485,8 +485,14 @@ def add_onhand_minus_wip(inv: pd.DataFrame, structured: pd.DataFrame) -> pd.Data
         wip = pd.DataFrame({"__ITEM_KEY__": out["__ITEM_KEY__"].unique(), "WIP": 0.0})
 
     # Merge on the normalized key (both are StringDtype now)
-    out = out.merge(wip, on="__ITEM_KEY__", how="left")
-    out["WIP"] = out["WIP"].fillna(0.0)
+    out = out.merge(wip, on="__ITEM_KEY__", how="left", suffixes=("", "_calc"))
+
+    # Prefer existing WIP if present; otherwise use calculated, then 0
+    if "WIP" not in out.columns:
+        out["WIP"] = 0
+    out["WIP"] = out["WIP"].fillna(out.get("WIP_calc", 0)).fillna(0.0)
+    if "WIP_calc" in out.columns:
+        out.drop(columns=["WIP_calc"], inplace=True)
 
     # Derive 'On Hand - WIP'
     out["On Hand - WIP"] = out["On Hand"] - out["WIP"]

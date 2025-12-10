@@ -15,10 +15,11 @@ def engine():
 
 # ---------- Extract ----------
 def extract_inputs():
-    df_sales_order       = pd.read_csv(SALES_ORDER_FILE, encoding="ISO-8859-1")
-    inventory_df         = pd.read_csv(WAREHOUSE_INV_FILE)
-    df_shipping_schedule = pd.read_excel(SHIPPING_SCHEDULE_FILE)
-    df_pod               = pd.read_csv(POD_FILE, encoding="ISO-8859-1")
+    # Force str paths for Windows/OneDrive oddities; explicit engine to avoid parser quirks
+    df_sales_order       = pd.read_csv(str(SALES_ORDER_FILE), encoding="ISO-8859-1", engine="python")
+    inventory_df         = pd.read_csv(str(WAREHOUSE_INV_FILE))
+    df_shipping_schedule = pd.read_excel(str(SHIPPING_SCHEDULE_FILE))
+    df_pod               = pd.read_csv(str(POD_FILE), encoding="ISO-8859-1", engine="python")
     return df_sales_order, inventory_df, df_shipping_schedule, df_pod
 
 def fetch_word_files_df(api_url: str) -> pd.DataFrame:
