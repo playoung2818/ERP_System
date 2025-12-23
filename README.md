@@ -1,3 +1,5 @@
+
+![Animation1](https://github.com/user-attachments/assets/d8266a1c-08dd-4b89-a996-ca9529e34241)
 # QuickBooks Inventory Analytics – Portfolio Project
 
 I rebuilt QuickBooks operational views into a unified analytics pipeline, blending inventory, sales orders, purchase orders, picking signals, and shipping data to drive lead-time decisions and sales order visibility.
