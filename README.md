@@ -23,8 +23,6 @@ This project rebuilds QuickBooks views for inventory and order management. It co
 - Outputs: inventory_status, structured sales orders, POD, shipping, ledger, item summary, ATP, and Not_assigned_SO export; publishes to DB and Google Sheets when configured.
 
 ## Lead Time Assignment Workflow
-<img width="1691" height="567" alt="image" src="https://github.com/user-attachments/assets/995b4df0-06fe-4c86-86a8-ba2ff2670364" />
-
 ```text
 [Receiving WO]
     |
@@ -36,5 +34,8 @@ This project rebuilds QuickBooks views for inventory and order management. It co
     |
     |-- No  -> [Check if PO for short items exists]
                |-- Yes -> [Assign LT = Vendor Ship Date + 7]
-               |-- No  -> [Ask Brenda to place order]
+               |-- No  -> [Ask Taipei to place order]
 ```
+
+## Projected Inventory Shortages
+<img width="1691" height="567" alt="image" src="https://github.com/user-attachments/assets/995b4df0-06fe-4c86-86a8-ba2ff2670364" />
