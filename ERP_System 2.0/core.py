@@ -141,18 +141,28 @@ def transform_inventory(inventory_df: pd.DataFrame, wip_lookup: pd.DataFrame | N
     return inv
 
 def transform_pod(df_pod: pd.DataFrame) -> pd.DataFrame:
-    pod = df_pod.drop(columns=['Amount','Open Balance',"Rcv'd","Qty", 'Deliv Date'], axis =1)
-    pod.rename(columns={"Date":"Order Date","Num":"QB Num","Backordered":"Qty(+)"},inplace=True)
-    pod = pod.drop(pod.columns[[0]], axis =1)
+    """
+    Clean POD export for loading into the structured pipeline.
+    Steps:
+      - drop finance/qty columns we do not need
+      - rename to unified column names (Order Date, QB Num, Qty(+))
+      - discard the leftmost index-like column
+      - drop fully-empty rows and rows with too few populated fields
+      - trim memo/QB Num text and normalize item numbers
+    """
+    pod = df_pod.copy()
+    pod = pod.drop(columns=['Amount', 'Open Balance', "Rcv'd", "Qty", 'Deliv Date'], errors="ignore")
+    pod.rename(columns={"Date": "Order Date", "Num": "QB Num", "Backordered": "Qty(+)"}, inplace=True)
+    pod = pod.drop(pod.columns[[0]], axis=1)
     # pod = pod[pod['Name'] == 'Neousys Technology Incorp.'].copy()
-    pod = pod.dropna(axis=0, how='all',subset=None, inplace=False)
+    pod = pod.dropna(axis=0, how='all', subset=None, inplace=False)
     pod = pod.dropna(thresh=5)
-    pod['Memo'] = pod['Memo'].str.split(' ',expand=True)[0]
-    pod['QB Num'] = pod['QB Num'].str.split('(',expand=True)[0]
+    pod['Memo'] = pod['Memo'].str.split(' ', expand=True)[0]
+    pod['QB Num'] = pod['QB Num'].str.split('(', expand=True)[0]
     # print(pod['Memo'].str.split('*',expand=True)[0])
-    pod['Memo'] = pod['Memo'].str.replace("*","")
-    pod.rename(columns={"Memo":"Item"},inplace=True)
-    pod['Order Date']= pd.to_datetime(pod['Order Date'])
+    pod['Memo'] = pod['Memo'].str.replace("*", "")
+    pod.rename(columns={"Memo": "Item"}, inplace=True)
+    pod['Order Date'] = pd.to_datetime(pod['Order Date'])
     pod["Item"] = pod["Item"].map(normalize_item)
     df_pod = pd.DataFrame(pod)
     return df_pod
@@ -160,7 +170,21 @@ def transform_pod(df_pod: pd.DataFrame) -> pd.DataFrame:
 
 def transform_shipping(df_shipping_schedule: pd.DataFrame) -> pd.DataFrame:
 
-    df = df_shipping_schedule[df_shipping_schedule['Ship to'] == 'Neousys Technology America, Inc.'].copy()
+    def _norm_shipto(val: str) -> str:
+        """Uppercase + strip punctuation/spaces so 'Inc.'/'Inc' variants match."""
+        return re.sub(r"[^A-Za-z0-9]", "", str(val)).upper()
+
+    # Accept both with/without the comma (and minor punctuation/spacing differences)
+    target_shipto = {_norm_shipto("Neousys Technology America, Inc."), _norm_shipto("Neousys Technology America Inc.")}
+
+    df = df_shipping_schedule.copy()
+    if "Ship to" in df.columns:
+        df["__shipto_key"] = df["Ship to"].apply(_norm_shipto)
+        df = df[df["__shipto_key"].isin(target_shipto)].copy()
+        df.drop(columns=["__shipto_key"], inplace=True, errors="ignore")
+    else:
+        # No Ship to column; nothing to transform
+        return pd.DataFrame(columns=["SO NO.", "QB Num", "Item", "Description", "Ship Date", "Qty(+)", "Pre/Bare"])
 
     # --- make sure the columns exist (create empty ones if missing) ---
     need = ['SO NO.', 'Customer PO No.', 'Model Name', 'Ship Date', 'Qty', 'Description']
@@ -411,7 +435,7 @@ def build_structured_df(
     structured_df["Component_Status"] = np.select(
         [
             (structured_df["Available"] >= 0) & (structured_df["On Hand"] > 0),
-            (structured_df["Available"] + structured_df["On PO"] > 0)
+            (structured_df["Available"] + structured_df["On PO"] >= 0)
         ],
         ["Available", "Waiting"],
         default="Shortage"

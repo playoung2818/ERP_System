@@ -3,7 +3,7 @@ import re
 import numpy as np
 import pandas as pd
 from pandas.api.types import CategoricalDtype
-from core import _norm_cols
+from core import _norm_cols, _norm_key
 from erp_normalize import normalize_item
 
 ## 1) NAV (shipping) → expand pre-installed components
@@ -105,6 +105,7 @@ def build_opening_stock(SO: pd.DataFrame) -> pd.DataFrame:
         .drop_duplicates(subset=["Item"], keep="last")
         .rename(columns={col: "Opening"})
     )
+    stock["Item"] = _norm_key(stock["Item"])
     return stock
 
 def _order_events(df: pd.DataFrame) -> pd.DataFrame:
@@ -131,14 +132,19 @@ def build_events(SO: pd.DataFrame, NAV_EXP: pd.DataFrame) -> pd.DataFrame:
         .rename(columns={"Qty(+)": "Delta"})
         .assign(Kind="IN", Source="NAV")
     )
+    inbound["Item_raw"] = inbound["Item"]
+    inbound["Item"] = _norm_key(inbound["Item"])
+
     outbound = (
         so.loc[so["Qty(-)"] > 0, ["Ship Date", "Item", "Qty(-)", "QB Num", "P. O. #", "Name"]]
         .rename(columns={"Ship Date": "Date", "Qty(-)": "Delta"})
         .assign(Kind="OUT", Source="SO")
     )
+    outbound["Item_raw"] = outbound["Item"]
+    outbound["Item"] = _norm_key(outbound["Item"])
     outbound["Delta"] = -outbound["Delta"]
 
-    cols = ["Date", "Item", "Delta", "Kind", "Source", "QB Num", "P. O. #", "Name"]
+    cols = ["Date", "Item", "Delta", "Kind", "Source", "QB Num", "P. O. #", "Name", "Item_raw"]
     inbound  = inbound.reindex(columns=cols)
     outbound = outbound.reindex(columns=cols)
 
