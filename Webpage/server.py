@@ -597,12 +597,8 @@ def index():
         return render_template_string(ERR_TPL, error=_LAST_LOAD_ERR), 503
 
     # ---- read inputs (work with GET or POST) ----
-    so_input   = (request.values.get("so") or "").strip()
-    item_input = (request.values.get("item") or "").strip()
-
-    # If item is provided, jump straight to combined item details
-    if item_input:
-        return redirect(url_for("item_details", item=item_input))
+    so_input = (request.values.get("so") or "").strip()
+    customer_input = (request.values.get("customer") or "").strip()
 
     # Flexible SO handling: allow "20251368", "SO20251368", or "so-20251368"
     so_num = ""
@@ -618,6 +614,8 @@ def index():
     rows, count = None, 0
     order_summary = None
     table_headers = None
+    customer_options = None
+    customer_query = None
     if so_input:
         rows_df = pd.DataFrame()
 
@@ -708,11 +706,37 @@ def index():
         table_headers = [h for h in required_headers if h not in ("Order Date","Name","P. O. #","QB Num","Ship Date")]
         table_df = rows_df[table_headers].copy()
         rows = table_df.fillna("").astype(str).to_dict(orient="records")
+    elif customer_input:
+        customer_query = customer_input
+        customer_options = []
+        if "Name" in SO_INV.columns:
+            name_mask = SO_INV["Name"].astype(str).str.contains(customer_input, case=False, na=False)
+            cust_df = SO_INV.loc[name_mask].copy()
+            if not cust_df.empty:
+                if "QB Num" not in cust_df.columns:
+                    cust_df["QB Num"] = ""
+                for c in ("Ship Date", "Order Date"):
+                    if c in cust_df.columns:
+                        cust_df[c] = _to_date_str(cust_df[c])
+                for qb_num, grp in cust_df.groupby("QB Num"):
+                    qb_str = str(qb_num).strip()
+                    if not qb_str:
+                        continue
+                    first = grp.iloc[0]
+                    customer_options.append({
+                        "qb_num": qb_str,
+                        "name": first.get("Name", ""),
+                        "ship_date": first.get("Ship Date", ""),
+                        "order_date": first.get("Order Date", ""),
+                    })
+                customer_options.sort(key=lambda x: x.get("qb_num", ""))
 
     return render_template_string(
         INDEX_TPL,
         so_num=so_input,           # show original entry
-        item_val=item_input,
+        customer_val=customer_input,
+        customer_query=customer_query,
+        customer_options=customer_options,
         rows=rows,
         count=count,
         loaded_at=_LAST_LOADED_AT.strftime("%Y-%m-%d %H:%M:%S") if _LAST_LOADED_AT else "—",
