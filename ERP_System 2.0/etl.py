@@ -85,7 +85,6 @@ def main():
     summary = save_not_assigned_so(
         Not_assigned_SO.copy(),
         output_path=r"C:\Users\Admin\OneDrive - neousys-tech\Desktop\Python\ERP_System\Not_assigned_SO.xlsx",
-        highlight_cols="Recommended Restock Qty",
         band_by_col="QB Num",
         shortage_col="Component_Status",
         shortage_value="Shortage",

@@ -93,7 +93,7 @@ from datetime import datetime
 def save_not_assigned_so(
     df: pd.DataFrame,
     output_path: str = "Not_assigned_SO.xlsx",
-    highlight_cols: str | list[str] = "Recommended Restock Qty",
+    highlight_cols: str | list[str] | None = None,
     band_by_col: str = "QB Num",
     shortage_col: str = "Component_Status",
     shortage_value: str = "Shortage",
@@ -205,10 +205,12 @@ def save_not_assigned_so(
             except (TypeError, ValueError):
                 avail_val = 0.0
             if sales_val > avail_val:
-                for cell in row:
-                    cell.fill = yellow_fill
+                target_cell = row[avail_on_po_idx - 1]
+                target_cell.fill = yellow_fill
 
     # ---------- highlight target column (cells > 0) ----------
+    if highlight_cols is None:
+        highlight_cols = []
     if isinstance(highlight_cols, str):
         highlight_cols = [highlight_cols]
     for highlight_col in highlight_cols:
