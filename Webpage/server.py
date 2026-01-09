@@ -604,17 +604,31 @@ def index():
     if item_input:
         return redirect(url_for("item_details", item=item_input))
 
-    # Flexible SO handling: allow "20251368" or "so-20251368"
-    so_num = so_input.upper()
-    if so_num and not so_num.startswith("SO-"):
-        so_num = f"SO-{so_num}"
+    # Flexible SO handling: allow "20251368", "SO20251368", or "so-20251368"
+    so_num = ""
+    so_upper = so_input.upper()
+    if so_upper:
+        if so_upper.startswith("SO-"):
+            so_num = so_upper
+        elif so_upper.startswith("SO") and so_upper[2:].replace("-", "").isdigit():
+            so_num = f"SO-{so_upper[2:].lstrip('-')}"
+        elif so_upper.replace("-", "").isdigit():
+            so_num = f"SO-{so_upper.replace('-', '')}"
 
     rows, count = None, 0
     order_summary = None
     table_headers = None
-    if so_num:
-        mask = SO_INV["QB Num"].astype(str).str.upper() == so_num
-        rows_df = SO_INV.loc[mask].copy()
+    if so_input:
+        rows_df = pd.DataFrame()
+
+        if so_num:
+            mask = SO_INV["QB Num"].astype(str).str.upper() == so_num
+            rows_df = SO_INV.loc[mask].copy()
+
+        if (rows_df is None or rows_df.empty) and "Name" in SO_INV.columns:
+            name_mask = SO_INV["Name"].astype(str).str.contains(so_input, case=False, na=False)
+            rows_df = SO_INV.loc[name_mask].copy()
+
         count = len(rows_df)
 
         if "On Hand - WIP" not in rows_df.columns and "In Stock(Inventory)" in rows_df.columns:
@@ -628,6 +642,13 @@ def index():
         ]
         for h in required_headers:
             if h not in rows_df.columns: rows_df[h] = ""
+
+        qb_for_pdf = None
+        if "QB Num" in rows_df.columns:
+            qb_vals = rows_df["QB Num"].dropna().astype(str).unique().tolist()
+            if len(qb_vals) == 1:
+                qb_for_pdf = qb_vals[0]
+
         summary_cols = ["Order Date", "Name", "P. O. #", "QB Num", "Ship Date"]
         summary_fields = []
         for col in summary_cols:
@@ -637,7 +658,7 @@ def index():
                 "value": col_vals.iloc[0] if not col_vals.empty else "",
             })
         order_summary = {
-            "qb_num": so_num,
+            "qb_num": qb_for_pdf or so_input,
             "row_count": count,
             "fields": summary_fields,
         }
@@ -648,25 +669,31 @@ def index():
             ser = rows_df["P. O. #"].dropna().astype(str)
             po_num = ser.iloc[0] if not ser.empty else ""
 
-        search_keys = [so_num]
-        if so_num.upper().startswith("SO-"):
-            search_keys.append(so_num[3:])  # numeric only
-        if po_num:
-            search_keys.append(str(po_num))
+        search_keys = []
+        if qb_for_pdf:
+            search_keys.append(qb_for_pdf)
+            qb_upper = qb_for_pdf.upper()
+            if qb_upper.startswith("SO-"):
+                search_keys.append(qb_upper[3:])  # numeric only
+            if po_num:
+                search_keys.append(str(po_num))
 
         pdf_record = None
-        for key in search_keys:
-            recs = _pdf_db_search_by_filename(key, limit=1)
-            if recs:
-                pdf_record = recs[0]
-                break
+        if search_keys:
+            for key in search_keys:
+                recs = _pdf_db_search_by_filename(key, limit=1)
+                if recs:
+                    pdf_record = recs[0]
+                    break
 
         if pdf_record:
             order_summary["pdf_url"] = f"/pdfid/{pdf_record['id']}"
             order_summary["pdf_name"] = pdf_record.get("file_name")
         else:
             # Fallback to filesystem map (exact filename stems)
-            keys_to_try = [so_num, so_num.replace("SO-", ""), so_num.replace("SO", "").strip("- ")]
+            keys_to_try = []
+            if qb_for_pdf:
+                keys_to_try = [qb_for_pdf, qb_for_pdf.replace("SO-", ""), qb_for_pdf.replace("SO", "").strip("- ")]
             pdf_info = None
             for k in keys_to_try:
                 pdf_info = PDF_MAP.get(k.upper())

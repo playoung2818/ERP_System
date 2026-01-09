@@ -7,10 +7,10 @@ ONEDRIVE = Path(os.getenv("OneDrive"))
 
 BASE = ONEDRIVE / "Share NTA Warehouse" / "Daily Update"
 
-SALES_ORDER_FILE = BASE / "Open Sales Order 01_06_2026.CSV"
-WAREHOUSE_INV_FILE = BASE / "WH01S_01_06.CSV"
-SHIPPING_SCHEDULE_FILE = BASE / "NTA_Shipping schedule_20260105.xlsx"
-POD_FILE = BASE / "POD_01_06.CSV"
+SALES_ORDER_FILE = BASE / "Open Sales Order 01_08_2026.CSV"
+WAREHOUSE_INV_FILE = BASE / "WH01S_01_08.CSV"
+SHIPPING_SCHEDULE_FILE = BASE / "NTA_Shipping schedule_20260108.xlsx"
+POD_FILE = BASE / "POD_01_08.CSV"
 
 
 # === Supabase/Postgres (pooled) ===

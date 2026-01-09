@@ -97,9 +97,9 @@ INDEX_TPL = """
 
   <form class="row gy-3 gx-4 align-items-end justify-content-center mb-5" method="get">
     <div class="col-12 col-md-4 form-section">
-      <label for="search-so">By SO / QB</label>
+      <label for="search-so">By SO / QB / Name</label>
       <input id="search-so" class="form-control form-control-lg" style="height:60px;font-size:1.05rem"
-             name="so" placeholder="SO-20251368 or 20251368" value="{{ so_num or '' }}">
+             name="so" placeholder="SO-20251368, 20251368, or Customer Name" value="{{ so_num or '' }}">
     </div>
     <div class="col-12 col-md-4 form-section">
       <label for="search-item">By Item</label>
@@ -113,7 +113,7 @@ INDEX_TPL = """
       <a class="btn btn-outline-secondary w-100" style="height:52px;font-size:1rem;font-weight:600" href="/?reload=1">Reload</a>
     </div>
     <div class="col-12 d-flex justify-content-between align-items-center">
-      <div class="text-muted small">Tip: Enter an SO / QB number or an Item to view its details.</div>
+      <div class="text-muted small">Tip: Enter an SO / QB number, a Customer Name, or an Item to view details.</div>
       <div class="d-flex gap-2"></div>
     </div>
   </form>
@@ -145,7 +145,7 @@ INDEX_TPL = """
   {% if order_summary %}
   <div class="summary-card bg-white mb-4 p-4">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
-      <div class="fw-bold">SO / QB Num: {{ order_summary.qb_num }}</div>
+      <div class="fw-bold">SO / QB / Name: {{ order_summary.qb_num }}</div>
       <div class="text-muted small">Rows: {{ order_summary.row_count }}</div>
     </div>
     <div class="summary-grid">
@@ -169,7 +169,7 @@ INDEX_TPL = """
   {% if so_num and rows %}
   <div class="card-lite bg-white">
     <div class="card-header fw-bold">
-      SO / QB Num: {{ so_num }} &nbsp; <span class="text-muted">Rows: {{ count }}</span>
+      SO / QB / Name: {{ so_num }} &nbsp; <span class="text-muted">Rows: {{ count }}</span>
     </div>
     <div class="card-body">
       <div class="table-responsive">
