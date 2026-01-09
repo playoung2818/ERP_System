@@ -191,7 +191,26 @@ def save_not_assigned_so(
                 for c in row:
                     c.font = red_font
 
+    # ---------- warn rows where Sales/Week > Available + On PO ----------
+    sales_idx = col_map.get("Sales/Week")
+    avail_on_po_idx = col_map.get("Available + On PO")
+    if sales_idx and avail_on_po_idx:
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+            try:
+                sales_val = float(row[sales_idx - 1].value)
+            except (TypeError, ValueError):
+                sales_val = 0.0
+            try:
+                avail_val = float(row[avail_on_po_idx - 1].value)
+            except (TypeError, ValueError):
+                avail_val = 0.0
+            if sales_val > avail_val:
+                for cell in row:
+                    cell.fill = yellow_fill
+
     # ---------- highlight target column (cells > 0) ----------
+    if isinstance(highlight_cols, str):
+        highlight_cols = [highlight_cols]
     for highlight_col in highlight_cols:
         if highlight_col in col_map:
             h_idx = col_map[highlight_col]
