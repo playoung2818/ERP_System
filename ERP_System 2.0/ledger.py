@@ -289,3 +289,58 @@ def build_reconcile_events(
         + out["Delta"].astype(str)
     )
     return out.loc[:, ["Date","Item","Delta","Kind","Source","Notes"]]
+
+
+def earliest_atp_by_projected_nav(
+    ledger: pd.DataFrame,
+    item: str,
+    qty: float,
+    from_date: pd.Timestamp | None = None,
+) -> pd.Timestamp | None:
+    """
+    Earliest date where Projected_NAV for an item meets/exceeds qty.
+    This is a simple "first time we reach the qty" check (no future min).
+    """
+    if ledger is None or ledger.empty:
+        return None
+
+    if from_date is None:
+        from_date = pd.Timestamp.today().normalize()
+    else:
+        from_date = pd.to_datetime(from_date).normalize()
+
+    qty_val = pd.to_numeric(qty, errors="coerce")
+    if pd.isna(qty_val):
+        return None
+    qty_val = int(qty_val)
+
+    if not {"Item", "Date", "Projected_NAV"}.issubset(ledger.columns):
+        return None
+
+    df = ledger.loc[ledger["Item"].astype(str) == str(item)].copy()
+    if df.empty:
+        return None
+
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df.loc[df["Date"].notna()]
+    if df.empty:
+        return None
+
+    dummy_dates = {pd.Timestamp("2099-07-04"), pd.Timestamp("2099-12-31")}
+    df = df.loc[~df["Date"].isin(dummy_dates)]
+    if df.empty:
+        return None
+
+    df["Projected_NAV"] = pd.to_numeric(df["Projected_NAV"], errors="coerce")
+    df = df.loc[df["Projected_NAV"].notna()]
+    if df.empty:
+        return None
+
+    df = df.loc[df["Date"] >= from_date].sort_values("Date")
+    if df.empty:
+        return None
+
+    candidates = df.loc[df["Projected_NAV"] >= qty_val, "Date"]
+    if candidates.empty:
+        return None
+    return candidates.min()

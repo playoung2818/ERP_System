@@ -151,7 +151,7 @@ def transform_pod(df_pod: pd.DataFrame) -> pd.DataFrame:
       - trim memo/QB Num text and normalize item numbers
     """
     pod = df_pod.copy()
-    pod = pod.drop(columns=['Amount', 'Open Balance', "Rcv'd", "Qty", 'Deliv Date'], errors="ignore")
+    pod = pod.drop(columns=['Amount', 'Open Balance', "Rcv'd", "Qty"], errors="ignore")
     pod.rename(columns={"Date": "Order Date", "Num": "QB Num", "Backordered": "Qty(+)"}, inplace=True)
     pod = pod.drop(pod.columns[[0]], axis=1)
     # pod = pod[pod['Name'] == 'Neousys Technology Incorp.'].copy()
@@ -163,13 +163,19 @@ def transform_pod(df_pod: pd.DataFrame) -> pd.DataFrame:
     pod['Memo'] = pod['Memo'].str.replace("*", "")
     pod.rename(columns={"Memo": "Item"}, inplace=True)
     pod['Order Date'] = pd.to_datetime(pod['Order Date'])
+    if 'Deliv Date' in pod.columns:
+        pod['Deliv Date'] = pd.to_datetime(pod['Deliv Date'], errors="coerce")
+    if 'Ship Date' not in pod.columns:
+        pod['Ship Date'] = pd.NaT
+    if 'Source Name' in pod.columns and 'Deliv Date' in pod.columns:
+        mask = pod['Source Name'].astype(str).ne("Neousys Technology Incorp.")
+        pod.loc[mask, 'Ship Date'] = pod.loc[mask, 'Deliv Date']
     pod["Item"] = pod["Item"].map(normalize_item)
     df_pod = pd.DataFrame(pod)
     return df_pod
 
 
 def transform_shipping(df_shipping_schedule: pd.DataFrame) -> pd.DataFrame:
-
     def _norm_shipto(val: str) -> str:
         """Uppercase + strip punctuation/spaces so 'Inc.'/'Inc' variants match."""
         return re.sub(r"[^A-Za-z0-9]", "", str(val)).upper()

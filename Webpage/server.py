@@ -24,6 +24,7 @@ if str(ERP_MODULE_DIR) not in sys.path:
     sys.path.append(str(ERP_MODULE_DIR))
 
 from erp_normalize import normalize_item
+from ledger import earliest_atp_by_projected_nav
 from db_config import get_engine, DATABASE_DSN
 
 app = Flask(__name__)
@@ -349,6 +350,15 @@ def _coerce_total(val):
     as_float = float(val)
     return int(as_float) if as_float.is_integer() else as_float
 
+def _format_intish(val: object) -> str:
+    if val is None or val == "" or pd.isna(val):
+        return ""
+    try:
+        fval = float(val)
+    except Exception:
+        return str(val)
+    return str(int(fval)) if fval.is_integer() else str(fval)
+
 def _aggregate_metric(series: pd.Series) -> int | float | None:
     numeric = pd.to_numeric(series, errors="coerce").dropna()
     if numeric.empty:
@@ -365,72 +375,25 @@ def _lookup_earliest_atp_date(item: str, qty: float = 1.0) -> datetime | None:
     Best-effort ATP lookup.
 
     Preferred source: precomputed item_atp (faster, computed in ETL).
-    Fallback: derive FutureMin_NAV on the fly from the ledger_analytics
-    table for the specific item when item_atp is missing or empty.
+    Fallback: derive from ledger_analytics for the specific item when
+    item_atp is missing or empty.
     """
     today = datetime.today().date()
+    from_date = pd.Timestamp(today)
 
     # -------- primary: item_atp table --------
     if ITEM_ATP is not None and not ITEM_ATP.empty:
-        df = ITEM_ATP.copy()
-        if {"Item", "Date", "FutureMin_NAV"}.issubset(df.columns):
-            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-            mask = (
-                df["Item"].astype(str) == str(item)
-            ) & df["Date"].notna() & (df["Date"].dt.date >= today)
-            df_item = df.loc[mask, ["Date", "FutureMin_NAV"]].dropna(subset=["FutureMin_NAV"])
-            if not df_item.empty:
-                df_item["FutureMin_NAV"] = pd.to_numeric(df_item["FutureMin_NAV"], errors="coerce")
-                ok = df_item["FutureMin_NAV"] >= float(qty)
-                candidates = df_item.loc[ok, "Date"]
-                if not candidates.empty:
-                    return candidates.min().to_pydatetime()
+        atp_dt = earliest_atp_by_projected_nav(ITEM_ATP, item, qty, from_date=from_date)
+        if atp_dt is not None:
+            return atp_dt.to_pydatetime()
 
     # -------- fallback: compute from ledger --------
     if LEDGER is None or LEDGER.empty:
         return None
-    df_ledger = LEDGER.copy()
-    if not {"Item", "Date", "Projected_NAV"}.issubset(df_ledger.columns):
+    atp_dt = earliest_atp_by_projected_nav(LEDGER, item, qty, from_date=from_date)
+    if atp_dt is None:
         return None
-
-    df_item = df_ledger.loc[df_ledger["Item"].astype(str) == str(item)].copy()
-    if df_item.empty:
-        return None
-
-    df_item["Date"] = pd.to_datetime(df_item["Date"], errors="coerce")
-    df_item = df_item.loc[df_item["Date"].notna()].copy()
-    if df_item.empty:
-        return None
-
-    df_item["Projected_NAV"] = pd.to_numeric(df_item["Projected_NAV"], errors="coerce")
-
-    # Ignore dummy far-future placeholders and apply a reasonable horizon
-    dummy_dates = {pd.Timestamp("2099-07-04"), pd.Timestamp("2099-12-31")}
-    df_item = df_item.loc[~df_item["Date"].isin(dummy_dates)]
-    if df_item.empty:
-        return None
-
-    df_item.sort_values("Date", inplace=True)
-
-    # backward cumulative min of Projected_NAV over time (per item timeline)
-    vals = df_item["Projected_NAV"].values[::-1]
-    future_min = []
-    current_min = float("inf")
-    for v in vals:
-        v = float(v)
-        current_min = v if current_min == float("inf") else min(current_min, v)
-        future_min.append(current_min)
-    df_item["FutureMin_NAV"] = future_min[::-1]
-
-    df_item = df_item.loc[df_item["Date"].dt.date >= today, ["Date", "FutureMin_NAV"]]
-    if df_item.empty:
-        return None
-
-    ok = df_item["FutureMin_NAV"] >= float(qty)
-    candidates = df_item.loc[ok, "Date"]
-    if candidates.empty:
-        return None
-    return candidates.min().to_pydatetime()
+    return atp_dt.to_pydatetime()
 
 
 def _find_pdf_url_for_so(so_num: str, po_num: str | None = None) -> str | None:
@@ -1112,11 +1075,11 @@ def quotation_lookup():
     item_input = (request.values.get("item") or "").strip()
     qty_raw = (request.values.get("qty") or "").strip()
     try:
-        qty_val = float(qty_raw) if qty_raw else 1.0
+        qty_val = int(float(qty_raw)) if qty_raw else 1
         if qty_val <= 0:
-            qty_val = 1.0
+            qty_val = 1
     except ValueError:
-        qty_val = 1.0
+        qty_val = 1
 
     ledger_columns: list[str] = []
     ledger_rows: list[dict] = []
@@ -1168,6 +1131,10 @@ def quotation_lookup():
                     if not proj_series.dropna().empty:
                         min_nav_value = proj_series.min()
 
+                for c in ("Delta", "Projected_NAV", "NAV_before", "NAV_after"):
+                    if c in df_item.columns:
+                        df_item[c] = df_item[c].apply(_format_intish)
+
                 records = df_item[keep_cols].fillna("").astype(str).to_dict(orient="records")
 
                 # Attach _is_min_nav flag for UI highlighting
@@ -1190,6 +1157,8 @@ def quotation_lookup():
         earliest_atp_dt = _lookup_earliest_atp_date(item_input, qty=qty_val)
         if earliest_atp_dt is not None:
             earliest_atp = earliest_atp_dt.strftime("%Y-%m-%d")
+        else:
+            earliest_atp = "Out of Stock"
 
     return render_template_string(
         QUOTE_TPL,
