@@ -381,16 +381,22 @@ def _lookup_earliest_atp_date(item: str, qty: float = 1.0) -> datetime | None:
     today = datetime.today().date()
     from_date = pd.Timestamp(today)
 
-    # -------- primary: item_atp table (FutureMin_NAV logic) --------
-    if ITEM_ATP is not None and not ITEM_ATP.empty:
-        atp_dt = earliest_atp_strict(ITEM_ATP, item, qty, from_date=from_date, allow_zero=True)
-        if atp_dt is not None:
-            return atp_dt.to_pydatetime()
-
-    # -------- fallback: compute from ledger --------
+    # -------- primary: compute from ledger (exclude placeholder dates) --------
     if LEDGER is None or LEDGER.empty:
-        return None
-    atp_view = build_atp_view(LEDGER)
+        # fallback to precomputed item_atp if ledger is unavailable
+        if ITEM_ATP is None or ITEM_ATP.empty:
+            return None
+        atp_dt = earliest_atp_strict(ITEM_ATP, item, qty, from_date=from_date, allow_zero=True)
+        if atp_dt is None:
+            return None
+        return atp_dt.to_pydatetime()
+
+    df_ledger = LEDGER.copy()
+    if "Date" in df_ledger.columns:
+        df_ledger["Date"] = pd.to_datetime(df_ledger["Date"], errors="coerce")
+        dummy_dates = {pd.Timestamp("2099-07-04"), pd.Timestamp("2099-12-31")}
+        df_ledger = df_ledger.loc[~df_ledger["Date"].isin(dummy_dates)]
+    atp_view = build_atp_view(df_ledger)
     atp_dt = earliest_atp_strict(atp_view, item, qty, from_date=from_date, allow_zero=True)
     if atp_dt is None:
         return None
