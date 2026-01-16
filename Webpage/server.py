@@ -24,7 +24,7 @@ if str(ERP_MODULE_DIR) not in sys.path:
     sys.path.append(str(ERP_MODULE_DIR))
 
 from erp_normalize import normalize_item
-from ledger import earliest_atp_by_projected_nav
+from atp import build_atp_view, earliest_atp_strict
 from db_config import get_engine, DATABASE_DSN
 
 app = Flask(__name__)
@@ -381,16 +381,17 @@ def _lookup_earliest_atp_date(item: str, qty: float = 1.0) -> datetime | None:
     today = datetime.today().date()
     from_date = pd.Timestamp(today)
 
-    # -------- primary: item_atp table --------
+    # -------- primary: item_atp table (FutureMin_NAV logic) --------
     if ITEM_ATP is not None and not ITEM_ATP.empty:
-        atp_dt = earliest_atp_by_projected_nav(ITEM_ATP, item, qty, from_date=from_date)
+        atp_dt = earliest_atp_strict(ITEM_ATP, item, qty, from_date=from_date, allow_zero=True)
         if atp_dt is not None:
             return atp_dt.to_pydatetime()
 
     # -------- fallback: compute from ledger --------
     if LEDGER is None or LEDGER.empty:
         return None
-    atp_dt = earliest_atp_by_projected_nav(LEDGER, item, qty, from_date=from_date)
+    atp_view = build_atp_view(LEDGER)
+    atp_dt = earliest_atp_strict(atp_view, item, qty, from_date=from_date, allow_zero=True)
     if atp_dt is None:
         return None
     return atp_dt.to_pydatetime()
