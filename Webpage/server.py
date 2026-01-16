@@ -1143,9 +1143,15 @@ def quotation_lookup():
                     if not proj_series.dropna().empty:
                         min_nav_value = proj_series.min()
 
+                if "Projected_NAV" in df_item.columns:
+                    df_item.rename(columns={"Projected_NAV": "Projected_Qty"}, inplace=True)
+                    keep_cols = ["Projected_Qty" if c == "Projected_NAV" else c for c in keep_cols]
+
                 for c in ("Delta", "Projected_NAV", "NAV_before", "NAV_after"):
                     if c in df_item.columns:
                         df_item[c] = df_item[c].apply(_format_intish)
+                if "Projected_Qty" in df_item.columns:
+                    df_item["Projected_Qty"] = df_item["Projected_Qty"].apply(_format_intish)
 
                 records = df_item[keep_cols].fillna("").astype(str).to_dict(orient="records")
 

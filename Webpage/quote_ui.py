@@ -17,6 +17,8 @@ QUOTE_TPL = """
     .metric .value{ font-size:1.3rem; font-weight:700; }
     .table-responsive{ max-height:70vh; overflow:auto; }
     .table thead th{ position:sticky; top:0; z-index:2; background:var(--hdr); }
+    .th-projected{ background:#dcfce7 !important; }
+    .cell-projected-min{ background:#bbf7d0 !important; font-weight:700; }
   </style>
 </head>
 <body>
@@ -101,7 +103,7 @@ QUOTE_TPL = """
           <thead class="table-light text-uppercase small text-muted">
             <tr>
               {% for c in ledger_columns %}
-                <th>{{ c }}</th>
+                <th class="{% if c == 'Projected_Qty' %}th-projected{% endif %}">{{ c }}</th>
               {% endfor %}
             </tr>
           </thead>
@@ -110,7 +112,7 @@ QUOTE_TPL = """
               {% for r in ledger_rows %}
                 <tr class="{% if r['Date'] == 'Lead Time Pending' %}table-warning{% elif r['_is_min_nav'] and (not r['Date'].startswith('2099')) %}table-warning{% endif %}">
                   {% for c in ledger_columns %}
-                    <td>{{ r[c] }}</td>
+                    <td class="{% if c == 'Projected_Qty' and r['_is_min_nav'] %}cell-projected-min{% endif %}">{{ r[c] }}</td>
                   {% endfor %}
                 </tr>
               {% endfor %}
