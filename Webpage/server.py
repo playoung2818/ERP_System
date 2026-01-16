@@ -597,8 +597,8 @@ def index():
 
         required_headers = [
             "Order Date","Name","P. O. #","QB Num","Item","Qty(-)","Available",
-            "Available + Pre-installed PO","On Hand","On Sales Order","On PO",
-            "Assigned Q'ty","On Hand - WIP","Available + On PO","Sales/Week",
+            "Available + On PO","Available + Pre-installed PO","On Hand","On Sales Order","On PO",
+            "Assigned Q'ty","On Hand - WIP","Sales/Week",
             "Recommended Restock Qty","Component_Status","Ship Date"
         ]
         for h in required_headers:
