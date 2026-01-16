@@ -249,7 +249,7 @@ INDEX_TPL = """
           </tbody>
         </table>
       </div>
-      <div class="mt-2 text-muted small">Tip: Click "On Sales Order" or "On PO" to drill down without leaving the page. Headers stay visible when you scroll.</div>
+      <div class="mt-2 text-muted small">Tip: Click "On Sales Order" or "On PO" to drill down for more information</div>
       <div id="item-detail-panel" class="detail-panel"></div>
     </div>
   </div>
