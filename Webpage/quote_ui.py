@@ -108,7 +108,7 @@ QUOTE_TPL = """
           <tbody>
             {% if ledger_rows %}
               {% for r in ledger_rows %}
-                <tr class="{% if r['_is_min_nav'] and (not r['Date'].startswith('2099')) %}table-warning{% endif %}">
+                <tr class="{% if r['Date'] == 'Lead Time Pending' %}table-warning{% elif r['_is_min_nav'] and (not r['Date'].startswith('2099')) %}table-warning{% endif %}">
                   {% for c in ledger_columns %}
                     <td>{{ r[c] }}</td>
                   {% endfor %}
