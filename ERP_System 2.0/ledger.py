@@ -123,7 +123,11 @@ def _order_events(df: pd.DataFrame) -> pd.DataFrame:
     out.reset_index(drop=True, inplace=True)
     return out
 
-def build_events(SO: pd.DataFrame, NAV_EXP: pd.DataFrame) -> pd.DataFrame:
+def build_events(
+    SO: pd.DataFrame,
+    NAV_EXP: pd.DataFrame,
+    POD: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     so = _norm_cols(SO)
     nav = _norm_cols(NAV_EXP)
 
@@ -148,7 +152,29 @@ def build_events(SO: pd.DataFrame, NAV_EXP: pd.DataFrame) -> pd.DataFrame:
     inbound  = inbound.reindex(columns=cols)
     outbound = outbound.reindex(columns=cols)
 
-    events = pd.concat([inbound, outbound], ignore_index=True, sort=False)
+    pod_events = pd.DataFrame(columns=cols)
+    if POD is not None and not POD.empty:
+        pod = _norm_cols(POD)
+        if "Source Name" in pod.columns:
+            pod = pod.loc[
+                pod["Source Name"].astype(str).str.strip().ne("Neousys Technology Incorp.")
+            ].copy()
+        if "Ship Date" not in pod.columns and "Deliv Date" in pod.columns:
+            pod["Ship Date"] = pod["Deliv Date"]
+        pod_keep = ["Ship Date", "Item", "Qty(+)", "QB Num", "P. O. #", "Name"]
+        for c in pod_keep:
+            if c not in pod.columns:
+                pod[c] = pd.NA
+        pod_events = (
+            pod.loc[pod["Qty(+)"] > 0, pod_keep]
+            .rename(columns={"Ship Date": "Date", "Qty(+)": "Delta"})
+            .assign(Kind="IN", Source="POD")
+        )
+        pod_events["Item_raw"] = pod_events["Item"]
+        pod_events["Item"] = _norm_key(pod_events["Item"])
+        pod_events = pod_events.reindex(columns=cols)
+
+    events = pd.concat([inbound, pod_events, outbound], ignore_index=True, sort=False)
     return _order_events(events)
 
 def build_ledger_from_events(SO: pd.DataFrame, EVENTS: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:

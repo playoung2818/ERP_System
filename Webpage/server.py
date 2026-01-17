@@ -1130,10 +1130,6 @@ def quotation_lookup():
                 df_item = df_item.sort_values(["Date", "Kind"])
                 date_vals = pd.to_datetime(df_item["Date"], errors="coerce")
                 df_item["Date"] = date_vals.dt.strftime("%Y-%m-%d")
-                pending_mask = date_vals.isin(
-                    [pd.Timestamp("2099-07-04"), pd.Timestamp("2099-12-31")]
-                )
-                df_item.loc[pending_mask, "Date"] = "Lead Time Pending"
 
                 # Determine minimum Projected_NAV for highlighting (after sort so alignment is correct)
                 min_nav_value = None

@@ -67,12 +67,12 @@ def main():
     nav_exp = expand_nav_preinstalled(ship)
 
     # -------- Build events: IN/OUT only (no reconcile) --------
-    events_inout = build_events(structured, nav_exp)
+    events_inout = build_events(structured, nav_exp, pod)
     events_all = _order_events(events_inout)   # no concat, no recon
 
     # -------- Ledger from prebuilt events --------
     ledger, item_summary, violations = build_ledger_from_events(structured, events_all)
-    cols = ["Date", "Item", "Projected_NAV", "Name", "QB Num"]
+    cols = ["Date", "Item_raw", "Projected_NAV", "Name", "QB Num"]
     print(violations.loc[:, cols])
 
     # -------- ATP view (Available-to-Promise) --------
